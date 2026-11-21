@@ -14,7 +14,7 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "1.0.4";
+    public static final String APP_VERSION = "1.0.5";
     public static final String APP_TITLE = "معرّب JoJo's Bizarre Adventure: Golden Hymn";
     public static final String APP_SUBTITLE = "مثبّت ذكي مع حارس الأمان والنسخ الاحتياطي (Shizuku & SAF)";
     public static final String BADGE_LABEL = "تعريب JoJo: Golden Hymn";
@@ -43,9 +43,9 @@ public final class LauncherConfig {
     public static final long TARGET_LANG_ORIG_SIZE = 5429509L;
     public static final String TARGET_LANG_ORIG_MD5 = "22C346BBFB12F16B6D7AE6D44EF855A9";
 
-    /** الحجم وبصمة MD5 المعتمدة لحزمة التعريب الكاملة (jojo_full_arabic_v2.zip) لإصدار 1.0.21 */
-    public static final long TARGET_LANG_PATCHED_SIZE = 5644290L;
-    public static final String TARGET_LANG_PATCHED_MD5 = "C6AE7043E278DB444995A7E29E830A33";
+    /** الحجم وبصمة MD5 المعتمدة لحزمة التعريب الكاملة (jojo_full_arabic_v3.zip) لإصدار 1.0.21 */
+    public static final long TARGET_LANG_PATCHED_SIZE = 5637557L;
+    public static final String TARGET_LANG_PATCHED_MD5 = "CDD6795F66C6B079DD3B85900B333076";
 
     /** مسار وحجم ملف الفهرس الأساسي config/force.conf في إصدار 1.0.21 */
     public static final String TARGET_INDEX_REL_PATH = "config/force.conf";
@@ -102,7 +102,7 @@ public final class LauncherConfig {
     // 4) إعدادات جسر Shizuku المحلي (منفذ مستقل عن لانشر DBL)
     // =========================================================================
     public static final int BRIDGE_PORT = 38922;
-    public static final String BRIDGE_REV = "r6";
+    public static final String BRIDGE_REV = "r7";
     public static final String SHIZUKU_PACKAGE = "moe.shizuku.privileged.api";
 
     // =========================================================================
