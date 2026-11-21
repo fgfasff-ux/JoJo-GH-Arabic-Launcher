@@ -121,6 +121,24 @@ public class MainActivity extends Activity {
     private MediaPlayer promoPlayer;
     private Surface promoSurface;
     private boolean promoPrepared = false;
+    private boolean isPromoMuted = false;
+    private TextView btnPromoAudio;
+    private final Runnable hidePromoAudioRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (btnPromoAudio != null && btnPromoAudio.getVisibility() == View.VISIBLE) {
+                btnPromoAudio.animate()
+                        .alpha(0f)
+                        .setDuration(260L)
+                        .withEndAction(() -> {
+                            if (btnPromoAudio != null) {
+                                btnPromoAudio.setVisibility(View.GONE);
+                            }
+                        })
+                        .start();
+            }
+        }
+    };
 
     // عناصر الواجهة
     private Typeface fontRegular;
@@ -223,12 +241,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        mainHandler.removeCallbacks(hidePromoAudioRunnable);
         pausePromoVideo();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        mainHandler.removeCallbacks(hidePromoAudioRunnable);
         releasePromoVideo();
         try {
             Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener);
@@ -239,8 +259,39 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================================
-    // إدارة مشغّل الفيديو الترويجي الصامت المحلي (بدون WebView أو استهلاك إنترنت)
+    // إدارة مشغّل الفيديو الترويجي المحلي مع التحكم بالصوت والتلاشي التلقائي
     // =========================================================================
+
+    private void applyPromoVolume() {
+        try {
+            if (promoPlayer != null) {
+                float vol = isPromoMuted ? 0f : 1f;
+                promoPlayer.setVolume(vol, vol);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void showPromoAudioControlTemporarily() {
+        if (btnPromoAudio == null) {
+            return;
+        }
+        mainHandler.removeCallbacks(hidePromoAudioRunnable);
+        btnPromoAudio.animate().cancel();
+        btnPromoAudio.setText(isPromoMuted ? "🔇" : "🔊");
+        if (btnPromoAudio.getVisibility() != View.VISIBLE) {
+            btnPromoAudio.setAlpha(0f);
+            btnPromoAudio.setVisibility(View.VISIBLE);
+        }
+        btnPromoAudio.animate().alpha(1f).setDuration(160L).start();
+        mainHandler.postDelayed(hidePromoAudioRunnable, 2000L);
+    }
+
+    private void togglePromoAudioMute() {
+        isPromoMuted = !isPromoMuted;
+        applyPromoVolume();
+        showPromoAudioControlTemporarily();
+    }
 
     private void startPromoVideoOnSurface(SurfaceTexture st) {
         releasePromoVideo();
@@ -256,19 +307,20 @@ public class MainActivity extends Activity {
             promoSurface = new Surface(st);
             mp.setSurface(promoSurface);
             mp.setLooping(true);
-            mp.setVolume(0f, 0f);
+            float initVol = isPromoMuted ? 0f : 1f;
+            mp.setVolume(initVol, initVol);
             mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
             mp.setOnPreparedListener(player -> {
                 promoPrepared = true;
                 try {
-                    player.setVolume(0f, 0f);
+                    float v = isPromoMuted ? 0f : 1f;
+                    player.setVolume(v, v);
                     player.setLooping(true);
                     player.start();
                 } catch (Throwable ignored) {
                 }
             });
             mp.setOnErrorListener((player, what, extra) -> {
-                // في حال فشل الترميز على جهاز قديم نخفي TextureView فتظهر الصورة الاحتياطية بسلاسة
                 mainHandler.post(() -> {
                     if (promoTextureView != null) {
                         promoTextureView.setVisibility(View.GONE);
@@ -299,7 +351,7 @@ public class MainActivity extends Activity {
     private void resumePromoVideo() {
         try {
             if (promoPlayer != null && promoPrepared && !promoPlayer.isPlaying()) {
-                promoPlayer.setVolume(0f, 0f);
+                applyPromoVolume();
                 promoPlayer.start();
             }
         } catch (Throwable ignored) {
@@ -554,6 +606,26 @@ public class MainActivity extends Activity {
         overlayTextCol.addView(overlayTag);
         overlayTextCol.addView(overlayTitle);
         promoInner.addView(overlayTextCol, overlayLp);
+
+        // أيقونة زر كتم/تشغيل الصوت في الزاوية (مخفي افتراضياً ويظهر عند لمس الفيديو ثم يتلاشى بعد ثانيتين)
+        btnPromoAudio = makeText("🔊", 15f, Color.WHITE, true);
+        btnPromoAudio.setGravity(Gravity.CENTER);
+        GradientDrawable audioBg = new GradientDrawable();
+        audioBg.setShape(GradientDrawable.OVAL);
+        audioBg.setColor(Color.parseColor("#B30A0516"));
+        audioBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
+        btnPromoAudio.setBackground(audioBg);
+        btnPromoAudio.setAlpha(0f);
+        btnPromoAudio.setVisibility(View.GONE);
+        btnPromoAudio.setOnClickListener(v -> togglePromoAudioMute());
+
+        FrameLayout.LayoutParams audioLp = new FrameLayout.LayoutParams(dp(38), dp(38), Gravity.TOP | Gravity.LEFT);
+        audioLp.setMargins(dp(10), dp(10), dp(10), dp(10));
+        promoInner.addView(btnPromoAudio, audioLp);
+
+        // لمس مساحة الفيديو يُظهر زر الصوت ويخفيه تلقائياً بعد 2000ms
+        promoInner.setClickable(true);
+        promoInner.setOnClickListener(v -> showPromoAudioControlTemporarily());
 
         promoCard.addView(promoInner, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, dp(186)));
