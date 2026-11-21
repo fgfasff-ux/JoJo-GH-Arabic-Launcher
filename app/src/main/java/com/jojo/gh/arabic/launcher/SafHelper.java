@@ -318,12 +318,19 @@ public final class SafHelper {
                 }
                 return "OK|SAFE|true|" + curLangSize + "|" + curLangMd5 + "|" + curConfSize;
             } else {
-                if (expectedLangSize > 0 && langExists && curLangSize != expectedLangSize) {
-                    return "MISMATCH|LANG_SIZE_CHANGED|false|حجم ملف اللغة تغير (" + curLangSize + ")";
-                }
-                if (expectedLangMd5 != null && !expectedLangMd5.isEmpty() && langExists
-                        && !expectedLangMd5.equalsIgnoreCase(curLangMd5)) {
-                    return "MISMATCH|LANG_MD5_CHANGED|false|بصمة MD5 لملف اللغة تغيرت";
+                boolean matchesKnownPatched = langExists
+                        && LauncherConfig.TARGET_LANG_PATCHED_SIZE > 0
+                        && curLangSize == LauncherConfig.TARGET_LANG_PATCHED_SIZE
+                        && LauncherConfig.TARGET_LANG_PATCHED_MD5.equalsIgnoreCase(curLangMd5);
+
+                if (!matchesKnownPatched) {
+                    if (expectedLangSize > 0 && langExists && curLangSize != expectedLangSize) {
+                        return "MISMATCH|LANG_SIZE_CHANGED|false|حجم ملف اللغة تغير (" + curLangSize + ")";
+                    }
+                    if (expectedLangMd5 != null && !expectedLangMd5.isEmpty() && langExists
+                            && !expectedLangMd5.equalsIgnoreCase(curLangMd5)) {
+                        return "MISMATCH|LANG_MD5_CHANGED|false|بصمة MD5 لملف اللغة تغيرت";
+                    }
                 }
                 if (expectedForceConfSize > 0 && confExists && curConfSize != expectedForceConfSize) {
                     return "MISMATCH|FORCE_CONF_CHANGED|false|حجم config/force.conf تغير (" + curConfSize + ")";

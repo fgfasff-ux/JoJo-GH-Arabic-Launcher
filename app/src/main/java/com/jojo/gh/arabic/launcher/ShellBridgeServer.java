@@ -357,14 +357,21 @@ public class ShellBridgeServer {
                 }
                 return "OK|SAFE|true|" + curLangSize + "|" + curLangMd5 + "|" + curForceConfSize;
             } else {
-                // اللعبة غير معرّبة حالياً: نتحقق من أن ملف اللغة الأصلي أو الفهرس لم يتحدثا لإصدار جديد
-                if (expectedLangSize > 0 && langFile.isFile() && curLangSize != expectedLangSize) {
-                    return "MISMATCH|LANG_SIZE_CHANGED|false|حجم t_languageBean.bbytes الحالي (" + curLangSize
-                            + ") لا يطابق المتوقع (" + expectedLangSize + ")";
-                }
-                if (expectedLangMd5 != null && !expectedLangMd5.isEmpty() && langFile.isFile()
-                        && !expectedLangMd5.equalsIgnoreCase(curLangMd5)) {
-                    return "MISMATCH|LANG_MD5_CHANGED|false|بصمة MD5 لملف t_languageBean.bbytes تغيرت (" + curLangMd5 + ")";
+                // اللعبة غير معرّبة حالياً (أو حزمة التعريب المعتمدة مثبتة مسبقاً):
+                boolean matchesKnownPatched = langFile.isFile()
+                        && LauncherConfig.TARGET_LANG_PATCHED_SIZE > 0
+                        && curLangSize == LauncherConfig.TARGET_LANG_PATCHED_SIZE
+                        && LauncherConfig.TARGET_LANG_PATCHED_MD5.equalsIgnoreCase(curLangMd5);
+
+                if (!matchesKnownPatched) {
+                    if (expectedLangSize > 0 && langFile.isFile() && curLangSize != expectedLangSize) {
+                        return "MISMATCH|LANG_SIZE_CHANGED|false|حجم t_languageBean.bbytes الحالي (" + curLangSize
+                                + ") لا يطابق المتوقع (" + expectedLangSize + ")";
+                    }
+                    if (expectedLangMd5 != null && !expectedLangMd5.isEmpty() && langFile.isFile()
+                            && !expectedLangMd5.equalsIgnoreCase(curLangMd5)) {
+                        return "MISMATCH|LANG_MD5_CHANGED|false|بصمة MD5 لملف t_languageBean.bbytes تغيرت (" + curLangMd5 + ")";
+                    }
                 }
                 if (expectedForceConfSize > 0 && forceConfFile.isFile() && curForceConfSize != expectedForceConfSize) {
                     return "MISMATCH|FORCE_CONF_CHANGED|false|حجم config/force.conf الحالي (" + curForceConfSize
