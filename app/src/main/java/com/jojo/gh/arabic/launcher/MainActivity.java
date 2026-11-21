@@ -9,12 +9,16 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.res.AssetFileDescriptor;
 import android.graphics.Color;
+import android.graphics.Outline;
+import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
+import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,9 +26,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
+import android.view.ViewOutlineProvider;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -48,13 +56,12 @@ import java.util.concurrent.Executors;
 import rikka.shizuku.Shizuku;
 
 /**
- * الواجهة الرئيسية لمشغّل ومثبّت تعريب JoJo's Bizarre Adventure: Golden Hymn.
- * تدعم:
- * - حارس الأمان وفحص التحديثات (Version Safety Guard) لحماية الحساب عند صدور تحديث للعبة
- * - التحديث والتحميل أونلاين (GitHub Releases / manifest.json)
- * - التثبيت من ملف ZIP محلي للاختبار الفوري
- * - الوصول متعدد الطبقات لـ Android/data عبر Shizuku / SAF / DirectFS / Root
- * - النسخ الاحتياطي التلقائي والاستعادة الأصلية بضغطة زر
+ * الواجهة الرئيسية لمشغّل ومثبّت تعريب JoJo's Bizarre Adventure: Golden Hymn — تعريب R.D.AV (v1.1.0).
+ * تصميم Dark Gaming UI مستوحى من ألوان «الرياح الذهبية - Giorno Giovanna» مع:
+ * - خلفية فيديو ترويجية صامتة متكررة مدمجة محلياً (TextureView + MediaPlayer بدون WebView أو إنترنت)
+ * - حارس الأمان وفحص التحديثات (Version Safety Guard)
+ * - مؤشر خطوات حي (4 مراحل) وإحصائيات التعريب الفعلية (15,967 نصاً معرّباً)
+ * - كامل محركات الوصول والنسخ الاحتياطي (Shizuku / SAF / DirectFS / Root)
  */
 public class MainActivity extends Activity {
 
@@ -109,13 +116,21 @@ public class MainActivity extends Activity {
     private volatile boolean safetyAlertShownThisSession = false;
     private String bridgeAuthToken = "";
 
+    // مشغّل الفيديو المحلي الخفيف (TextureView + MediaPlayer)
+    private TextureView promoTextureView;
+    private MediaPlayer promoPlayer;
+    private Surface promoSurface;
+    private boolean promoPrepared = false;
+
     // عناصر الواجهة
     private Typeface fontRegular;
     private Typeface fontBold;
+    private TextView tvHeadlineStatus;
     private TextView tvGameBadge;
     private TextView tvSafetyBadge;
     private TextView tvAccessBadge;
     private TextView tvPatchBadge;
+    private TextView tvStep1Dot, tvStep2Dot, tvStep3Dot, tvStep4Dot;
     private TextView tvRemoteInfo;
     private TextView tvProgressPercent;
     private TextView tvStatusText;
@@ -127,7 +142,6 @@ public class MainActivity extends Activity {
     private Button btnDiagScan;
     private Button btnLaunchGame;
     private Button btnRestore;
-    private Button btnCommunity;
 
     private final Shizuku.OnBinderReceivedListener shizukuBinderReceivedListener = () -> {
         mainHandler.post(() -> {
@@ -166,7 +180,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
         getWindow().setStatusBarColor(LauncherConfig.COL_BG);
-        getWindow().setNavigationBarColor(LauncherConfig.COL_BG);
+        getWindow().setNavigationBarColor(LauncherConfig.COL_BG_BOTTOM);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
 
         bridgeAuthToken = loadOrCreateBridgeToken();
@@ -192,6 +206,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        resumePromoVideo();
         SafHelper.cleanupInvalidTreePermissions(this);
         if (!isBusy) {
             refreshStatusAsync(() -> {
@@ -206,13 +221,110 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        pausePromoVideo();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
+        releasePromoVideo();
         try {
             Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener);
             Shizuku.removeBinderDeadListener(shizukuBinderDeadListener);
             Shizuku.removeRequestPermissionResultListener(shizukuPermListener);
         } catch (Throwable ignored) {
+        }
+    }
+
+    // =========================================================================
+    // إدارة مشغّل الفيديو الترويجي الصامت المحلي (بدون WebView أو استهلاك إنترنت)
+    // =========================================================================
+
+    private void startPromoVideoOnSurface(SurfaceTexture st) {
+        releasePromoVideo();
+        try {
+            AssetFileDescriptor afd = getResources().openRawResourceFd(R.raw.bg_promo);
+            if (afd == null) {
+                return;
+            }
+            MediaPlayer mp = new MediaPlayer();
+            mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+            afd.close();
+
+            promoSurface = new Surface(st);
+            mp.setSurface(promoSurface);
+            mp.setLooping(true);
+            mp.setVolume(0f, 0f);
+            mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
+            mp.setOnPreparedListener(player -> {
+                promoPrepared = true;
+                try {
+                    player.setVolume(0f, 0f);
+                    player.setLooping(true);
+                    player.start();
+                } catch (Throwable ignored) {
+                }
+            });
+            mp.setOnErrorListener((player, what, extra) -> {
+                // في حال فشل الترميز على جهاز قديم نخفي TextureView فتظهر الصورة الاحتياطية بسلاسة
+                mainHandler.post(() -> {
+                    if (promoTextureView != null) {
+                        promoTextureView.setVisibility(View.GONE);
+                    }
+                });
+                releasePromoVideo();
+                return true;
+            });
+            promoPlayer = mp;
+            mp.prepareAsync();
+        } catch (Throwable t) {
+            if (promoTextureView != null) {
+                promoTextureView.setVisibility(View.GONE);
+            }
+            releasePromoVideo();
+        }
+    }
+
+    private void pausePromoVideo() {
+        try {
+            if (promoPlayer != null && promoPrepared && promoPlayer.isPlaying()) {
+                promoPlayer.pause();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void resumePromoVideo() {
+        try {
+            if (promoPlayer != null && promoPrepared && !promoPlayer.isPlaying()) {
+                promoPlayer.setVolume(0f, 0f);
+                promoPlayer.start();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void releasePromoVideo() {
+        promoPrepared = false;
+        if (promoPlayer != null) {
+            try {
+                promoPlayer.stop();
+            } catch (Throwable ignored) {
+            }
+            try {
+                promoPlayer.release();
+            } catch (Throwable ignored) {
+            }
+            promoPlayer = null;
+        }
+        if (promoSurface != null) {
+            try {
+                promoSurface.release();
+            } catch (Throwable ignored) {
+            }
+            promoSurface = null;
         }
     }
 
@@ -268,189 +380,482 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================================
-    // بناء الواجهة البرمجية (RTL) - ثيم JoJo: Golden Hymn
+    // بناء الواجهة البرمجية الفخمة (Dark Gaming UI — Golden Wind / تعريب R.D.AV)
     // =========================================================================
 
     private View buildUi() {
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(LauncherConfig.COL_BG);
+        GradientDrawable pageBg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{LauncherConfig.COL_BG, LauncherConfig.COL_BG_BOTTOM, LauncherConfig.COL_BG}
+        );
+        scroll.setBackground(pageBg);
         scroll.setFillViewport(true);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(14), dp(16), dp(22));
+        root.setPadding(dp(14), dp(12), dp(14), dp(20));
         scroll.addView(root, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        // 1) بطاقة الهيدر
-        LinearLayout heroCard = new LinearLayout(this);
-        heroCard.setOrientation(LinearLayout.VERTICAL);
-        heroCard.setPadding(dp(16), dp(16), dp(16), dp(16));
-        GradientDrawable heroBg = new GradientDrawable(
+        // ---------------------------------------------------------------------
+        // 1) الترويسة العليا: شعار اللعبة + «تعريب R.D.AV» + شارة إنستقرام
+        // ---------------------------------------------------------------------
+        LinearLayout headerCard = new LinearLayout(this);
+        headerCard.setOrientation(LinearLayout.VERTICAL);
+        headerCard.setPadding(dp(14), dp(14), dp(14), dp(12));
+        GradientDrawable headerBg = new GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.parseColor("#2B1654"), LauncherConfig.COL_CARD, Color.parseColor("#1D1038")}
+                new int[]{Color.parseColor("#241145"), LauncherConfig.COL_CARD, Color.parseColor("#180C2B")}
         );
-        heroBg.setCornerRadius(dp(18));
-        heroBg.setStroke(dp(1), LauncherConfig.COL_ACCENT);
-        heroCard.setBackground(heroBg);
+        headerBg.setCornerRadius(dp(18));
+        headerBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        headerCard.setBackground(headerBg);
 
-        TextView pill = makeText(LauncherConfig.BADGE_LABEL, 11, LauncherConfig.COL_GOLD, true);
-        pill.setPadding(dp(10), dp(4), dp(10), dp(4));
-        GradientDrawable pillBg = new GradientDrawable();
-        pillBg.setColor(Color.parseColor("#2D1F08"));
-        pillBg.setCornerRadius(dp(14));
-        pillBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
-        pill.setBackground(pillBg);
-        LinearLayout.LayoutParams pillLp = new LinearLayout.LayoutParams(
+        LinearLayout topBrandRow = new LinearLayout(this);
+        topBrandRow.setOrientation(LinearLayout.HORIZONTAL);
+        topBrandRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        // أيقونة اللعبة الرسمية بإطار دائري ذهبي
+        FrameLayout iconWrap = new FrameLayout(this);
+        GradientDrawable iconFrame = new GradientDrawable();
+        iconFrame.setCornerRadius(dp(14));
+        iconFrame.setStroke(dp(2), LauncherConfig.COL_ACCENT);
+        iconFrame.setColor(LauncherConfig.COL_CARD_INNER);
+        iconWrap.setBackground(iconFrame);
+        iconWrap.setPadding(dp(2), dp(2), dp(2), dp(2));
+
+        ImageView ivLogo = new ImageView(this);
+        ivLogo.setImageResource(R.drawable.ic_jojo_game);
+        ivLogo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        clipRounded(ivLogo, dp(12));
+        iconWrap.addView(ivLogo, new FrameLayout.LayoutParams(dp(50), dp(50)));
+
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(54), dp(54));
+        iconLp.leftMargin = dp(12);
+        topBrandRow.addView(iconWrap, iconLp);
+
+        LinearLayout titleCol = new LinearLayout(this);
+        titleCol.setOrientation(LinearLayout.VERTICAL);
+        TextView tvBrand = makeText(LauncherConfig.BRAND_TITLE, 19, LauncherConfig.COL_GOLD, true);
+        TextView tvGameTitle = makeText(LauncherConfig.APP_TITLE, 12.5f, LauncherConfig.COL_TEXT, true);
+        tvGameTitle.setPadding(0, dp(2), 0, 0);
+        TextView tvSub = makeText(LauncherConfig.APP_SUBTITLE, 10.5f, LauncherConfig.COL_MUTED, false);
+        tvSub.setPadding(0, dp(2), 0, 0);
+        titleCol.addView(tvBrand);
+        titleCol.addView(tvGameTitle);
+        titleCol.addView(tvSub);
+        topBrandRow.addView(titleCol, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        headerCard.addView(topBrandRow);
+
+        // صف الشارات العليا: الإصدار + إنستقرام R.D.AV (قابل للضغط)
+        LinearLayout pillsRow = new LinearLayout(this);
+        pillsRow.setOrientation(LinearLayout.HORIZONTAL);
+        pillsRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams pillsLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        pillsLp.topMargin = dp(10);
+
+        TextView verPill = makeText("v" + LauncherConfig.APP_VERSION + " • 1.0.21", 10.5f, LauncherConfig.COL_CYAN, true);
+        verPill.setPadding(dp(10), dp(5), dp(10), dp(5));
+        GradientDrawable verBg = new GradientDrawable();
+        verBg.setColor(Color.parseColor("#1D1138"));
+        verBg.setCornerRadius(dp(10));
+        verBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+        verPill.setBackground(verBg);
+        LinearLayout.LayoutParams verLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        pillLp.bottomMargin = dp(10);
-        heroCard.addView(pill, pillLp);
+        verLp.leftMargin = dp(8);
+        pillsRow.addView(verPill, verLp);
 
-        heroCard.addView(makeText(LauncherConfig.APP_TITLE, 17, LauncherConfig.COL_TEXT, true));
-        TextView subtitle = makeText(LauncherConfig.APP_SUBTITLE, 12, LauncherConfig.COL_MUTED, false);
-        subtitle.setPadding(0, dp(4), 0, 0);
-        heroCard.addView(subtitle);
-        root.addView(heroCard, makeCardLp());
+        TextView igPill = makeText("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE + " ↗", 11f, Color.WHITE, true);
+        igPill.setPadding(dp(12), dp(5), dp(12), dp(5));
+        GradientDrawable igBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#7C2D8C"), Color.parseColor("#C13584"), Color.parseColor("#D97706")}
+        );
+        igBg.setCornerRadius(dp(10));
+        igBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
+        igPill.setBackground(igBg);
+        igPill.setOnClickListener(v -> openUrl(LauncherConfig.INSTAGRAM_URL));
+        pillsRow.addView(igPill);
 
-        // 2) بطاقة الفحص الحي وحارس الأمان
-        LinearLayout statusCard = makeCard();
-        TextView statusTitle = makeText("لوحة الفحص وحارس الأمان", 14, LauncherConfig.COL_CYAN, true);
-        statusTitle.setPadding(0, 0, 0, dp(8));
-        statusCard.addView(statusTitle);
+        headerCard.addView(pillsRow, pillsLp);
+        root.addView(headerCard, makeCardLp());
 
-        tvGameBadge = addStatusRow(statusCard, "JoJo: Golden Hymn", "جارٍ الفحص...");
-        tvSafetyBadge = addStatusRow(statusCard, "حارس الأمان (توافق الإصدار)", "جارٍ التحقق...");
-        tvAccessBadge = addStatusRow(statusCard, "صلاحية الوصول لملفات اللعبة", "جارٍ الفحص...");
-        tvPatchBadge = addStatusRow(statusCard, "حالة التعريب المثبّت", "جارٍ الفحص...");
+        // ---------------------------------------------------------------------
+        // 2) بطاقة العرض الرئيسية بالفيديو التفاعلي المحلي الصامت (bg_promo.mp4)
+        // ---------------------------------------------------------------------
+        FrameLayout promoCard = new FrameLayout(this);
+        GradientDrawable promoBorderBg = new GradientDrawable();
+        promoBorderBg.setColor(LauncherConfig.COL_CARD_INNER);
+        promoBorderBg.setCornerRadius(dp(18));
+        promoBorderBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        promoCard.setBackground(promoBorderBg);
+        promoCard.setPadding(dp(1), dp(1), dp(1), dp(1));
 
-        btnGrantAccess = makeButton("تفعيل الربط التلقائي لمجلد اللعبة", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_CYAN, true);
+        FrameLayout promoInner = new FrameLayout(this);
+        clipRounded(promoInner, dp(17));
+
+        // طبقة الصورة الاحتياطية عالية الدقة (تظهر فوراً قبل بدء الفيديو أو عند غياب الترميز)
+        ImageView ivPoster = new ImageView(this);
+        ivPoster.setImageResource(R.drawable.bg_promo_poster);
+        ivPoster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        promoInner.addView(ivPoster, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        // طبقة الفيديو المحلي الصامت المتكرر (TextureView)
+        promoTextureView = new TextureView(this);
+        promoTextureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                startPromoVideoOnSurface(surface);
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                releasePromoVideo();
+                return true;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+            }
+        });
+        promoInner.addView(promoTextureView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        // طبقة تدرج ليلية أنيقة أسفل الفيديو لإبراز العنوان
+        View scrim = new View(this);
+        GradientDrawable scrimBg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.parseColor("#1A080512"), Color.parseColor("#44080512"), Color.parseColor("#E60A0516")}
+        );
+        scrim.setBackground(scrimBg);
+        promoInner.addView(scrim, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        // شارة حصرية على بطاقة العرض
+        LinearLayout overlayTextCol = new LinearLayout(this);
+        overlayTextCol.setOrientation(LinearLayout.VERTICAL);
+        overlayTextCol.setPadding(dp(14), dp(10), dp(14), dp(12));
+        FrameLayout.LayoutParams overlayLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
+
+        TextView overlayTag = makeText("GOLDEN WIND • الإصدار الكامل", 10f, LauncherConfig.COL_GOLD, true);
+        TextView overlayTitle = makeText("عِش مغامرة جوجو الغريبة... بالعربية الفصحى الكاملة", 13.5f, LauncherConfig.COL_TEXT, true);
+        overlayTitle.setPadding(0, dp(2), 0, 0);
+        overlayTextCol.addView(overlayTag);
+        overlayTextCol.addView(overlayTitle);
+        promoInner.addView(overlayTextCol, overlayLp);
+
+        promoCard.addView(promoInner, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, dp(186)));
+        root.addView(promoCard, makeCardLp());
+
+        // ---------------------------------------------------------------------
+        // 3) بطاقة حالة التعريب وحارس الأمان + شريط التقدم + مسار الخطوات (4 مراحل)
+        // ---------------------------------------------------------------------
+        LinearLayout statusCard = makeCard(LauncherConfig.COL_BORDER);
+
+        LinearLayout statusHeader = new LinearLayout(this);
+        statusHeader.setOrientation(LinearLayout.HORIZONTAL);
+        statusHeader.setGravity(Gravity.CENTER_VERTICAL);
+        statusHeader.addView(makeText("حالة التعريب وحارس الأمان", 13f, LauncherConfig.COL_CYAN, true),
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        tvProgressPercent = makeText("100%", 12.5f, LauncherConfig.COL_GOLD, true);
+        statusHeader.addView(tvProgressPercent);
+        statusCard.addView(statusHeader);
+
+        tvHeadlineStatus = makeText("جارٍ فحص حالة اللعبة وحارس الأمان...", 15.5f, LauncherConfig.COL_GOLD, true);
+        tvHeadlineStatus.setPadding(0, dp(6), 0, dp(2));
+        statusCard.addView(tvHeadlineStatus);
+
+        tvStatusText = makeText("حارس الأمان مفعّل: يتحقق من الإصدار 1.0.21 وبصمة الملفات تلقائياً.", 11.5f, LauncherConfig.COL_MUTED, false);
+        statusCard.addView(tvStatusText);
+
+        // شريط التقدم المتدرج (ذهبي -> بنفسجي)
+        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setMax(100);
+        progressBar.setProgress(0);
+        progressBar.setProgressDrawable(makeProgressDrawable());
+        LinearLayout.LayoutParams pbLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(8));
+        pbLp.topMargin = dp(10);
+        pbLp.bottomMargin = dp(10);
+        statusCard.addView(progressBar, pbLp);
+
+        // شريط المراحل الأربع (مستوحى من التصميم المرجعي)
+        LinearLayout stepperRow = new LinearLayout(this);
+        stepperRow.setOrientation(LinearLayout.HORIZONTAL);
+        stepperRow.setGravity(Gravity.CENTER);
+        tvStep1Dot = addStepItem(stepperRow, "فحص اللعبة");
+        tvStep2Dot = addStepItem(stepperRow, "حارس الأمان");
+        tvStep3Dot = addStepItem(stepperRow, "ربط Shizuku");
+        tvStep4Dot = addStepItem(stepperRow, "التعريب");
+        statusCard.addView(stepperRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        // خط فاصل رقيق
+        View divider = new View(this);
+        divider.setBackgroundColor(Color.parseColor("#2A1B4D"));
+        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1));
+        divLp.topMargin = dp(10);
+        divLp.bottomMargin = dp(8);
+        statusCard.addView(divider, divLp);
+
+        // تفاصيل الحالة الحية
+        tvGameBadge = addStatusRow(statusCard, "إصدار اللعبة (1.0.21)", "جارٍ الفحص...");
+        tvSafetyBadge = addStatusRow(statusCard, "حارس الأمان (Safety Guard)", "جارٍ التحقق...");
+        tvAccessBadge = addStatusRow(statusCard, "صلاحية الوصول (Shizuku / SAF)", "جارٍ الفحص...");
+        tvPatchBadge = addStatusRow(statusCard, "حالة حزمة التعريب", "جارٍ الفحص...");
+
+        btnGrantAccess = makeButton("تفعيل الربط التلقائي عبر Shizuku / SAF", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_GOLD, LauncherConfig.COL_ACCENT, true);
         btnGrantAccess.setVisibility(View.GONE);
         LinearLayout.LayoutParams grantLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42));
         grantLp.topMargin = dp(8);
         btnGrantAccess.setOnClickListener(v -> requestBestAccessInteractive());
         statusCard.addView(btnGrantAccess, grantLp);
+
         root.addView(statusCard, makeCardLp());
 
-        // 3) بطاقة التحديثات أونلاين (GitHub Releases)
-        LinearLayout updateCard = makeCard();
+        // ---------------------------------------------------------------------
+        // 4) أزرار التحكم الرئيسية (الترتيب الفخم المستوحى من التصميم المرجعي)
+        // ---------------------------------------------------------------------
+
+        // 1. الزر الرئيسي البارز: ▶ تشغيل اللعبة (تدرج ذهبي -> بنفسجي مضيء)
+        btnLaunchGame = new Button(this);
+        btnLaunchGame.setText("▶  تشغيل اللعبة");
+        btnLaunchGame.setAllCaps(false);
+        btnLaunchGame.setTextSize(16f);
+        btnLaunchGame.setTextColor(Color.parseColor("#0D061A"));
+        btnLaunchGame.setTypeface(fontBold);
+        GradientDrawable heroBtnBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{LauncherConfig.COL_GOLD, LauncherConfig.COL_ACCENT, Color.parseColor("#C084FC")}
+        );
+        heroBtnBg.setCornerRadius(dp(15));
+        heroBtnBg.setStroke(dp(1), Color.parseColor("#FEF08A"));
+        btnLaunchGame.setBackground(heroBtnBg);
+        btnLaunchGame.setOnClickListener(v -> launchGameWithSafetyCheck());
+        LinearLayout.LayoutParams launchLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
+        launchLp.bottomMargin = dp(9);
+        root.addView(btnLaunchGame, launchLp);
+
+        // 2. صف التثبيت: تثبيت / تحديث التعريب (ZIP) + التحديث أونلاين
+        LinearLayout rowInstall = new LinearLayout(this);
+        rowInstall.setOrientation(LinearLayout.HORIZONTAL);
+
+        btnInstallLocalZip = makeButton("تثبيت / تحديث التعريب (ZIP)", Color.parseColor("#1D1236"), LauncherConfig.COL_GOLD, LauncherConfig.COL_BORDER_GOLD, true);
+        btnInstallLocalZip.setTextSize(12.5f);
+        btnInstallLocalZip.setOnClickListener(v -> openLocalZipPicker());
+        LinearLayout.LayoutParams zipLp = new LinearLayout.LayoutParams(0, dp(48), 1.15f);
+        zipLp.leftMargin = dp(6);
+        rowInstall.addView(btnInstallLocalZip, zipLp);
+
+        btnInstallOnline = makeButton("تحديث أونلاين (GitHub)", Color.parseColor("#18102E"), LauncherConfig.COL_CYAN, LauncherConfig.COL_BORDER, true);
+        btnInstallOnline.setTextSize(12.5f);
+        btnInstallOnline.setOnClickListener(v -> startOnlineInstallFlow());
+        LinearLayout.LayoutParams onlineLp = new LinearLayout.LayoutParams(0, dp(48), 0.85f);
+        onlineLp.rightMargin = dp(6);
+        rowInstall.addView(btnInstallOnline, onlineLp);
+
+        LinearLayout.LayoutParams rowInstallLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowInstallLp.bottomMargin = dp(9);
+        root.addView(rowInstall, rowInstallLp);
+
+        // 3. صف الأدوات: فحص سلامة الملفات + استعادة النسخة الأصلية
+        LinearLayout rowTools = new LinearLayout(this);
+        rowTools.setOrientation(LinearLayout.HORIZONTAL);
+
+        btnDiagScan = makeButton("فحص سلامة الملفات", LauncherConfig.COL_CARD, LauncherConfig.COL_TEXT, LauncherConfig.COL_BORDER, true);
+        btnDiagScan.setTextSize(12.5f);
+        btnDiagScan.setOnClickListener(v -> runDiagnosticScanFlow());
+        LinearLayout.LayoutParams diagLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        diagLp.leftMargin = dp(6);
+        rowTools.addView(btnDiagScan, diagLp);
+
+        btnRestore = makeButton("استعادة النسخة الأصلية", Color.parseColor("#2B0E1E"), LauncherConfig.COL_DANGER, Color.parseColor("#7F1D3A"), true);
+        btnRestore.setTextSize(12.5f);
+        btnRestore.setOnClickListener(v -> confirmAndRestore());
+        LinearLayout.LayoutParams restLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        restLp.rightMargin = dp(6);
+        rowTools.addView(btnRestore, restLp);
+
+        LinearLayout.LayoutParams rowToolsLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowToolsLp.bottomMargin = dp(10);
+        root.addView(rowTools, rowToolsLp);
+
+        // ---------------------------------------------------------------------
+        // 5) شريط إحصائيات التعريب الفعلية (شبكة 2×2 مطابقة للتصميم المرجعي)
+        // ---------------------------------------------------------------------
+        LinearLayout statsCard = makeCard(LauncherConfig.COL_BORDER);
+        TextView statsTitle = makeText("إحصائيات حزمة تعريب R.D.AV", 12.5f, LauncherConfig.COL_GOLD, true);
+        statsTitle.setPadding(0, 0, 0, dp(8));
+        statsCard.addView(statsTitle);
+
+        LinearLayout statsRow1 = new LinearLayout(this);
+        statsRow1.setOrientation(LinearLayout.HORIZONTAL);
+        statsRow1.addView(makeStatChip(LauncherConfig.STAT_LINES, LauncherConfig.COL_GOLD), makeHalfLp(true));
+        statsRow1.addView(makeStatChip(LauncherConfig.STAT_SCOPE, LauncherConfig.COL_CYAN), makeHalfLp(false));
+        LinearLayout.LayoutParams sr1Lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        sr1Lp.bottomMargin = dp(7);
+        statsCard.addView(statsRow1, sr1Lp);
+
+        LinearLayout statsRow2 = new LinearLayout(this);
+        statsRow2.setOrientation(LinearLayout.HORIZONTAL);
+        statsRow2.addView(makeStatChip(LauncherConfig.STAT_COMPAT, LauncherConfig.COL_SUCCESS), makeHalfLp(true));
+        statsRow2.addView(makeStatChip(LauncherConfig.STAT_SAFETY, LauncherConfig.COL_TEXT), makeHalfLp(false));
+        statsCard.addView(statsRow2);
+
+        root.addView(statsCard, makeCardLp());
+
+        // ---------------------------------------------------------------------
+        // 6) بطاقة التحديثات أونلاين والتذييل
+        // ---------------------------------------------------------------------
+        LinearLayout updateCard = makeCard(LauncherConfig.COL_BORDER);
         LinearLayout updateHeader = new LinearLayout(this);
         updateHeader.setOrientation(LinearLayout.HORIZONTAL);
         updateHeader.setGravity(Gravity.CENTER_VERTICAL);
-        updateHeader.addView(makeText("حزمة التعريب أونلاين (GitHub)", 13, LauncherConfig.COL_GOLD, true),
+        updateHeader.addView(makeText("تحديثات GitHub Releases", 12f, LauncherConfig.COL_CYAN, true),
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        btnCheckUpdate = makeButton("فحص التحديث", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_GOLD, true);
-        btnCheckUpdate.setTextSize(11f);
-        btnCheckUpdate.setPadding(dp(12), dp(4), dp(12), dp(4));
+        btnCheckUpdate = makeButton("فحص التحديث", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_GOLD, LauncherConfig.COL_BORDER_GOLD, true);
+        btnCheckUpdate.setTextSize(10.5f);
+        btnCheckUpdate.setPadding(dp(10), dp(2), dp(10), dp(2));
         btnCheckUpdate.setOnClickListener(v -> checkOnlineUpdateAsync(true));
         updateHeader.addView(btnCheckUpdate, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, dp(34)));
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(32)));
         updateCard.addView(updateHeader);
 
-        String defaultRemoteMsg = LauncherConfig.isOnlineUrlConfigured()
-                ? "اضغط «فحص التحديث» للتحقق من أحدث حزمة تعريب متوافقة مع إصدار اللعبة."
-                : "يمكنك استخدام «تثبيت من ملف ZIP محلي» للاختبار الفوري على هاتفك.";
-        tvRemoteInfo = makeText(defaultRemoteMsg, 12, LauncherConfig.COL_MUTED, false);
-        tvRemoteInfo.setPadding(0, dp(8), 0, 0);
-        tvRemoteInfo.setLineSpacing(dp(3), 1f);
+        tvRemoteInfo = makeText("اضغط «تثبيت / تحديث التعريب (ZIP)» لاختيار ملف jojo_full_arabic_v3.zip أو «فحص التحديث» للتحقق أونلاين.", 11f, LauncherConfig.COL_MUTED, false);
+        tvRemoteInfo.setPadding(0, dp(6), 0, 0);
+        tvRemoteInfo.setLineSpacing(dp(2), 1f);
         updateCard.addView(tvRemoteInfo);
         root.addView(updateCard, makeCardLp());
 
-        // 4) بطاقة التقدم والحالة التنفيذية
-        LinearLayout progressCard = makeCard();
-        LinearLayout progRow = new LinearLayout(this);
-        progRow.setOrientation(LinearLayout.HORIZONTAL);
-        progRow.setGravity(Gravity.CENTER_VERTICAL);
-        progRow.addView(makeText("حالة التنفيذ", 13, LauncherConfig.COL_CYAN, true),
-                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        tvProgressPercent = makeText("جاهز", 12, LauncherConfig.COL_GOLD, true);
-        progRow.addView(tvProgressPercent);
-        progressCard.addView(progRow);
+        // تذييل مع روابط سريعة
+        LinearLayout footerRow = new LinearLayout(this);
+        footerRow.setOrientation(LinearLayout.HORIZONTAL);
+        footerRow.setGravity(Gravity.CENTER);
+        footerRow.setPadding(0, dp(2), 0, dp(8));
 
-        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setMax(100);
-        progressBar.setProgress(0);
-        progressBar.setProgressDrawable(makeProgressDrawable());
-        LinearLayout.LayoutParams pbLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(10));
-        pbLp.topMargin = dp(8);
-        pbLp.bottomMargin = dp(8);
-        progressCard.addView(progressBar, pbLp);
+        TextView tvFooter = makeText(LauncherConfig.FOOTER_TEXT + "  •  ", 10.5f, LauncherConfig.COL_MUTED, false);
+        TextView tvGitHubLink = makeText("GitHub", 10.5f, LauncherConfig.COL_CYAN, true);
+        tvGitHubLink.setOnClickListener(v -> openUrl(LauncherConfig.COMMUNITY_URL));
+        TextView tvSep = makeText("  •  ", 10.5f, LauncherConfig.COL_MUTED, false);
+        TextView tvIgFooter = makeText("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE, 10.5f, LauncherConfig.COL_GOLD, true);
+        tvIgFooter.setOnClickListener(v -> openUrl(LauncherConfig.INSTAGRAM_URL));
 
-        tvStatusText = makeText("حارس الأمان مفعّل: يتم فحص إصدار اللعبة وبصمة ملفاتها قبل كل تثبيت أو تشغيل.", 12, LauncherConfig.COL_TEXT, false);
-        progressCard.addView(tvStatusText);
-        root.addView(progressCard, makeCardLp());
-
-        // 5) الأزرار الرئيسية
-        btnInstallOnline = makeButton("تثبيت / تحديث التعريب أونلاين", LauncherConfig.COL_ACCENT, Color.parseColor("#120A1E"), true);
-        btnInstallOnline.setTextSize(15f);
-        btnInstallOnline.setOnClickListener(v -> startOnlineInstallFlow());
-        LinearLayout.LayoutParams primaryLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52));
-        primaryLp.bottomMargin = dp(8);
-        root.addView(btnInstallOnline, primaryLp);
-
-        btnInstallLocalZip = makeButton("تثبيت من ملف ZIP محلي (للاختبار)", LauncherConfig.COL_CARD, LauncherConfig.COL_GOLD, true);
-        btnInstallLocalZip.setTextSize(13.5f);
-        btnInstallLocalZip.setOnClickListener(v -> openLocalZipPicker());
-        LinearLayout.LayoutParams localLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
-        localLp.bottomMargin = dp(8);
-        root.addView(btnInstallLocalZip, localLp);
-
-        btnDiagScan = makeButton("فحص مسارات وملفات اللعبة (Shizuku)", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_CYAN, true);
-        btnDiagScan.setTextSize(13f);
-        btnDiagScan.setOnClickListener(v -> runDiagnosticScanFlow());
-        LinearLayout.LayoutParams diagLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42));
-        diagLp.bottomMargin = dp(8);
-        root.addView(btnDiagScan, diagLp);
-
-        btnLaunchGame = makeButton("تشغيل JoJo: Golden Hymn", Color.parseColor("#2A184D"), LauncherConfig.COL_TEXT, true);
-        btnLaunchGame.setTextSize(14f);
-        btnLaunchGame.setOnClickListener(v -> launchGameWithSafetyCheck());
-        LinearLayout.LayoutParams launchLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
-        launchLp.bottomMargin = dp(8);
-        root.addView(btnLaunchGame, launchLp);
-
-        LinearLayout bottomRow = new LinearLayout(this);
-        bottomRow.setOrientation(LinearLayout.HORIZONTAL);
-
-        btnCommunity = makeButton("صفحة التحديثات (GitHub)", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_CYAN, true);
-        btnCommunity.setOnClickListener(v -> openUrl(LauncherConfig.COMMUNITY_URL));
-        LinearLayout.LayoutParams commLp = new LinearLayout.LayoutParams(0, dp(44), 1.05f);
-        commLp.leftMargin = dp(6);
-        bottomRow.addView(btnCommunity, commLp);
-
-        btnRestore = makeButton("استعادة الأصل", Color.parseColor("#351323"), LauncherConfig.COL_DANGER, true);
-        btnRestore.setOnClickListener(v -> confirmAndRestore());
-        LinearLayout.LayoutParams restLp = new LinearLayout.LayoutParams(0, dp(44), 0.95f);
-        restLp.rightMargin = dp(6);
-        bottomRow.addView(btnRestore, restLp);
-
-        LinearLayout.LayoutParams bottomRowLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        bottomRowLp.bottomMargin = dp(12);
-        root.addView(bottomRow, bottomRowLp);
-
-        TextView footer = makeText(LauncherConfig.FOOTER_TEXT, 11, LauncherConfig.COL_MUTED, false);
-        footer.setGravity(Gravity.CENTER);
-        footer.setPadding(0, dp(4), 0, dp(6));
-        root.addView(footer);
+        footerRow.addView(tvFooter);
+        footerRow.addView(tvGitHubLink);
+        footerRow.addView(tvSep);
+        footerRow.addView(tvIgFooter);
+        root.addView(footerRow);
 
         return scroll;
+    }
+
+    private TextView addStepItem(LinearLayout parent, String title) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        TextView dot = makeText("•", 12f, LauncherConfig.COL_MUTED, true);
+        dot.setGravity(Gravity.CENTER);
+        GradientDrawable dotBg = new GradientDrawable();
+        dotBg.setShape(GradientDrawable.OVAL);
+        dotBg.setColor(Color.parseColor("#241740"));
+        dotBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+        dot.setBackground(dotBg);
+        col.addView(dot, new LinearLayout.LayoutParams(dp(24), dp(24)));
+
+        TextView lbl = makeText(title, 9.5f, LauncherConfig.COL_MUTED, false);
+        lbl.setGravity(Gravity.CENTER);
+        lbl.setPadding(0, dp(4), 0, 0);
+        col.addView(lbl);
+
+        parent.addView(col, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        return dot;
+    }
+
+    private void setStepDotState(TextView dot, boolean ok, boolean danger) {
+        if (dot == null) {
+            return;
+        }
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        if (danger) {
+            bg.setColor(Color.parseColor("#4C1022"));
+            bg.setStroke(dp(1), LauncherConfig.COL_DANGER);
+            dot.setText("!");
+            dot.setTextColor(LauncherConfig.COL_DANGER);
+        } else if (ok) {
+            bg.setColor(Color.parseColor("#113D27"));
+            bg.setStroke(dp(1), LauncherConfig.COL_SUCCESS);
+            dot.setText("✓");
+            dot.setTextColor(LauncherConfig.COL_SUCCESS);
+        } else {
+            bg.setColor(Color.parseColor("#241740"));
+            bg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+            dot.setText("•");
+            dot.setTextColor(LauncherConfig.COL_MUTED);
+        }
+        dot.setBackground(bg);
+    }
+
+    private TextView makeStatChip(String text, int accentColor) {
+        TextView tv = makeText(text, 10.5f, accentColor, true);
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(dp(8), dp(9), dp(8), dp(9));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(LauncherConfig.COL_CARD_INNER);
+        bg.setCornerRadius(dp(11));
+        bg.setStroke(dp(1), Color.parseColor("#2D1D52"));
+        tv.setBackground(bg);
+        return tv;
+    }
+
+    private LinearLayout.LayoutParams makeHalfLp(boolean isFirstInRtl) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+        if (isFirstInRtl) {
+            lp.leftMargin = dp(4);
+        } else {
+            lp.rightMargin = dp(4);
+        }
+        return lp;
+    }
+
+    private void clipRounded(View view, final int radiusPx) {
+        view.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View v, Outline outline) {
+                outline.setRoundRect(0, 0, v.getWidth(), v.getHeight(), radiusPx);
+            }
+        });
+        view.setClipToOutline(true);
     }
 
     private TextView addStatusRow(LinearLayout parent, String label, String initialBadge) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(4), 0, dp(4));
+        row.setPadding(0, dp(3), 0, dp(3));
 
-        TextView tvLabel = makeText(label, 12, LauncherConfig.COL_TEXT, false);
+        TextView tvLabel = makeText(label, 11.5f, LauncherConfig.COL_TEXT, false);
         row.addView(tvLabel, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView tvBadge = makeText(initialBadge, 11, LauncherConfig.COL_CYAN, true);
-        tvBadge.setPadding(dp(10), dp(4), dp(10), dp(4));
-        setBadgeStyle(tvBadge, Color.parseColor("#241740"), LauncherConfig.COL_CYAN);
+        TextView tvBadge = makeText(initialBadge, 10.5f, LauncherConfig.COL_CYAN, true);
+        tvBadge.setPadding(dp(9), dp(3), dp(9), dp(3));
+        setBadgeStyle(tvBadge, Color.parseColor("#22153D"), LauncherConfig.COL_CYAN);
         row.addView(tvBadge);
 
         parent.addView(row);
@@ -465,14 +870,14 @@ public class MainActivity extends Activity {
         badge.setTextColor(textColor);
     }
 
-    private LinearLayout makeCard() {
+    private LinearLayout makeCard(int borderColor) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(12), dp(14), dp(12));
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(LauncherConfig.COL_CARD);
         bg.setCornerRadius(dp(16));
-        bg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+        bg.setStroke(dp(1), borderColor);
         card.setBackground(bg);
         return card;
     }
@@ -484,7 +889,7 @@ public class MainActivity extends Activity {
         return lp;
     }
 
-    private TextView makeText(String text, int sizeSp, int color, boolean bold) {
+    private TextView makeText(String text, float sizeSp, int color, boolean bold) {
         TextView tv = new TextView(this);
         tv.setText(text);
         tv.setTextSize(sizeSp);
@@ -493,21 +898,17 @@ public class MainActivity extends Activity {
         return tv;
     }
 
-    private Button makeButton(String text, int bgColor, int textColor, boolean bold) {
+    private Button makeButton(String text, int bgColor, int textColor, int borderColor, boolean bold) {
         Button btn = new Button(this);
         btn.setText(text);
         btn.setAllCaps(false);
-        btn.setTextSize(13f);
+        btn.setTextSize(12.5f);
         btn.setTextColor(textColor);
         btn.setTypeface(bold ? fontBold : fontRegular);
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(bgColor);
-        bg.setCornerRadius(dp(14));
-        if (bgColor == LauncherConfig.COL_CARD_INNER || bgColor == LauncherConfig.COL_CARD) {
-            bg.setStroke(dp(1), LauncherConfig.COL_BORDER);
-        } else if (bgColor == Color.parseColor("#2A184D")) {
-            bg.setStroke(dp(1), LauncherConfig.COL_CYAN);
-        }
+        bg.setCornerRadius(dp(13));
+        bg.setStroke(dp(1), borderColor);
         btn.setBackground(bg);
         return btn;
     }
@@ -518,7 +919,7 @@ public class MainActivity extends Activity {
         bg.setCornerRadius(dp(6));
         GradientDrawable fill = new GradientDrawable(
                 GradientDrawable.Orientation.RIGHT_LEFT,
-                new int[]{LauncherConfig.COL_GOLD, LauncherConfig.COL_ACCENT}
+                new int[]{LauncherConfig.COL_GOLD, LauncherConfig.COL_ACCENT, LauncherConfig.COL_PURPLE}
         );
         fill.setCornerRadius(dp(6));
         LayerDrawable ld = new LayerDrawable(new Drawable[]{
@@ -535,7 +936,7 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================================
-    // حارس الأمان وفحص التحديثات (Version Safety Guard)
+    // حارس الأمان وفحص التحديثات (Version Safety Guard) — مطابق 100% لـ v1.0.5
     // =========================================================================
 
     private long getInstalledGameVersionCode() {
@@ -576,7 +977,6 @@ public class MainActivity extends Activity {
         boolean dataHasBackup = false;
         String mismatchReason = null;
 
-        // 1) فحص رقم إصدار الـ APK الرسمي (versionCode)
         if (installedVc > 0 && targetVc > 0 && installedVc != targetVc) {
             mismatchReason = "إصدار اللعبة المثبّت (v" + (installedVerName != null ? installedVerName : "?")
                     + " / code=" + installedVc + ") يختلف عن الإصدار المدعوم للتعريب (v"
@@ -584,7 +984,6 @@ public class MainActivity extends Activity {
                     + " / code=" + targetVc + ").";
         }
 
-        // 2) فحص حجم وبصمة ملف اللغة والفهرس في مجلد بيانات اللعبة (كشف التحديثات الداخلية Hot-Updates)
         if (isReadyAccessMode(mode)) {
             String resp = null;
             if (mode == AccessMode.BRIDGE_ACTIVE) {
@@ -622,7 +1021,6 @@ public class MainActivity extends Activity {
         }
 
         if (mismatchReason != null) {
-            // إذا كان هناك نسخة احتياطية/تعريب مثبّت، نستعيد الملفات الأصلية الآمنة تلقائياً فوراً
             if (autoRestoreIfMismatch && isReadyAccessMode(mode) && (dataHasBackup || isPatchCurrentlyInstalled)) {
                 executeRestoreSync(mode, null);
                 isPatchCurrentlyInstalled = false;
@@ -847,7 +1245,7 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================================
-    // تحديث الحالة والفحص الحي + تشغيل حارس الأمان عند البدء
+    // تحديث الحالة والفحص الحي + تحديث الخطوات الأربعة
     // =========================================================================
 
     private void refreshStatusAsync(Runnable afterUiUpdate) {
@@ -884,7 +1282,6 @@ public class MainActivity extends Activity {
             isPatchCurrentlyInstalled = patchInstalled;
             installedPatchVersion = patchVer;
 
-            // تشغيل حارس الأمان عند التشغيل: إذا تم اكتشاف تحديث جديد مع وجود تعريب مثبّت -> استعادة تلقائية + تنبيه
             SafetyCheckResult safety = gameInstalled
                     ? evaluateSafetyGuardSync(mode, latestRemoteManifest, true)
                     : new SafetyCheckResult(true, false, "");
@@ -898,29 +1295,68 @@ public class MainActivity extends Activity {
             final boolean fPatchInstalled = patchInstalled;
             final String fPatchVer = patchVer;
             final SafetyCheckResult fSafety = safety;
+            final boolean accessOk = isReadyAccessMode(mode);
 
             mainHandler.post(() -> {
+                // تحديث الخطوات الأربع وشريط التقدم الرئيسي
+                setStepDotState(tvStep1Dot, gameInstalled, !gameInstalled);
+                setStepDotState(tvStep2Dot, gameInstalled && fSafety.safe, gameInstalled && !fSafety.safe);
+                setStepDotState(tvStep3Dot, accessOk, false);
+                setStepDotState(tvStep4Dot, fPatchInstalled && fSafety.safe, false);
+
+                if (!isBusy) {
+                    if (!gameInstalled) {
+                        tvHeadlineStatus.setText("اللعبة غير مثبّتة على الجهاز");
+                        tvHeadlineStatus.setTextColor(LauncherConfig.COL_DANGER);
+                        progressBar.setProgress(0);
+                        tvProgressPercent.setText("0%");
+                    } else if (!fSafety.safe) {
+                        tvHeadlineStatus.setText("تم اكتشاف تحديث جديد للعبة!");
+                        tvHeadlineStatus.setTextColor(LauncherConfig.COL_DANGER);
+                        tvStatusText.setText(LauncherConfig.SAFETY_GUARD_ALERT_MESSAGE);
+                        progressBar.setProgress(25);
+                        tvProgressPercent.setText("تنبيه");
+                    } else if (fPatchInstalled) {
+                        tvHeadlineStatus.setText("التعريب مثبّت وسليم ✓");
+                        tvHeadlineStatus.setTextColor(LauncherConfig.COL_SUCCESS);
+                        tvStatusText.setText("جميع الملفات والبصمات متطابقة ومحمية بحارس الأمان. يمكنك تشغيل اللعبة الآن!");
+                        progressBar.setProgress(100);
+                        tvProgressPercent.setText("100%");
+                    } else if (accessOk) {
+                        tvHeadlineStatus.setText("جاهز لتثبيت التعريب الكامل");
+                        tvHeadlineStatus.setTextColor(LauncherConfig.COL_GOLD);
+                        tvStatusText.setText("اللعبة وصلاحية الوصول جاهزتان — اختر ملف التعريب (ZIP) للتثبيت الفوري.");
+                        progressBar.setProgress(75);
+                        tvProgressPercent.setText("75%");
+                    } else {
+                        tvHeadlineStatus.setText("بانتظار تفعيل Shizuku / SAF");
+                        tvHeadlineStatus.setTextColor(LauncherConfig.COL_WARN);
+                        tvStatusText.setText("اضغط زر التفعيل بالأسفل لربط مجلد اللعبة لمرة واحدة فقط.");
+                        progressBar.setProgress(50);
+                        tvProgressPercent.setText("50%");
+                    }
+                }
+
                 if (gameInstalled) {
                     String text = (gameVer != null && !gameVer.isEmpty())
-                            ? "مثبّتة (v" + gameVer + " #" + gameVc + ") ✓"
+                            ? "v" + gameVer + " (#" + gameVc + ") ✓"
                             : "مثبّتة وجاهزة ✓";
                     tvGameBadge.setText(text);
-                    setBadgeStyle(tvGameBadge, Color.parseColor("#143829"), LauncherConfig.COL_SUCCESS);
+                    setBadgeStyle(tvGameBadge, Color.parseColor("#113826"), LauncherConfig.COL_SUCCESS);
                 } else {
                     tvGameBadge.setText("غير مثبّتة");
-                    setBadgeStyle(tvGameBadge, Color.parseColor("#3A1822"), LauncherConfig.COL_DANGER);
+                    setBadgeStyle(tvGameBadge, Color.parseColor("#3D1222"), LauncherConfig.COL_DANGER);
                 }
 
                 if (!gameInstalled) {
-                    tvSafetyBadge.setText("بانتظار تثبيت اللعبة");
-                    setBadgeStyle(tvSafetyBadge, Color.parseColor("#241740"), LauncherConfig.COL_MUTED);
+                    tvSafetyBadge.setText("بانتظار اللعبة");
+                    setBadgeStyle(tvSafetyBadge, Color.parseColor("#22153D"), LauncherConfig.COL_MUTED);
                 } else if (fSafety.safe) {
                     tvSafetyBadge.setText("متوافق وآمن ✓");
-                    setBadgeStyle(tvSafetyBadge, Color.parseColor("#143829"), LauncherConfig.COL_SUCCESS);
+                    setBadgeStyle(tvSafetyBadge, Color.parseColor("#113826"), LauncherConfig.COL_SUCCESS);
                 } else {
-                    tvSafetyBadge.setText("تم اكتشاف تحديث للعبة!");
-                    setBadgeStyle(tvSafetyBadge, Color.parseColor("#3A1822"), LauncherConfig.COL_DANGER);
-                    tvStatusText.setText(LauncherConfig.SAFETY_GUARD_ALERT_MESSAGE);
+                    tvSafetyBadge.setText("تحديث غير متوافق!");
+                    setBadgeStyle(tvSafetyBadge, Color.parseColor("#3D1222"), LauncherConfig.COL_DANGER);
                     if (!safetyAlertShownThisSession) {
                         safetyAlertShownThisSession = true;
                         showSafetyGuardAlertDialog(fSafety.reason);
@@ -930,49 +1366,49 @@ public class MainActivity extends Activity {
                 boolean canAutoSaf = SafHelper.canAutoJumpToGameFolder(this);
                 switch (mode) {
                     case BRIDGE_ACTIVE:
-                        tvAccessBadge.setText("متصل عبر Shizuku/Bridge ✓");
-                        setBadgeStyle(tvAccessBadge, Color.parseColor("#143829"), LauncherConfig.COL_SUCCESS);
+                        tvAccessBadge.setText("Shizuku متصل ✓");
+                        setBadgeStyle(tvAccessBadge, Color.parseColor("#113826"), LauncherConfig.COL_SUCCESS);
                         btnGrantAccess.setVisibility(View.GONE);
                         break;
                     case DIRECT_FS:
-                        tvAccessBadge.setText("وصول مباشر متاح ✓");
-                        setBadgeStyle(tvAccessBadge, Color.parseColor("#143829"), LauncherConfig.COL_SUCCESS);
+                        tvAccessBadge.setText("وصول مباشر ✓");
+                        setBadgeStyle(tvAccessBadge, Color.parseColor("#113826"), LauncherConfig.COL_SUCCESS);
                         btnGrantAccess.setVisibility(View.GONE);
                         break;
                     case SAF_GRANTED:
-                        tvAccessBadge.setText("مربوط عبر SAF ✓");
-                        setBadgeStyle(tvAccessBadge, Color.parseColor("#143829"), LauncherConfig.COL_SUCCESS);
+                        tvAccessBadge.setText("SAF مربوط ✓");
+                        setBadgeStyle(tvAccessBadge, Color.parseColor("#113826"), LauncherConfig.COL_SUCCESS);
                         btnGrantAccess.setVisibility(View.GONE);
                         break;
                     case SHIZUKU_READY:
                     case SHIZUKU_NEED_PERM:
-                        tvAccessBadge.setText("جاهز عبر Shizuku بضغطة واحدة");
-                        setBadgeStyle(tvAccessBadge, Color.parseColor("#3B2B12"), LauncherConfig.COL_GOLD);
+                        tvAccessBadge.setText("جاهز بضغطة واحدة");
+                        setBadgeStyle(tvAccessBadge, Color.parseColor("#3D2A0D"), LauncherConfig.COL_GOLD);
                         btnGrantAccess.setText("منح إذن Shizuku الآن");
                         btnGrantAccess.setVisibility(View.VISIBLE);
                         break;
                     case SHIZUKU_STOPPED:
                         if (canAutoSaf) {
                             tvAccessBadge.setText("متاح عبر SAF أو Shizuku");
-                            setBadgeStyle(tvAccessBadge, Color.parseColor("#241740"), LauncherConfig.COL_CYAN);
+                            setBadgeStyle(tvAccessBadge, Color.parseColor("#22153D"), LauncherConfig.COL_CYAN);
                             btnGrantAccess.setText("تفعيل الربط التلقائي");
                             btnGrantAccess.setVisibility(View.VISIBLE);
                         } else {
-                            tvAccessBadge.setText("شغّل Shizuku للربط التلقائي");
-                            setBadgeStyle(tvAccessBadge, Color.parseColor("#3B2B12"), LauncherConfig.COL_WARN);
-                            btnGrantAccess.setText("فتح Shizuku للتشغيل");
+                            tvAccessBadge.setText("شغّل Shizuku أولاً");
+                            setBadgeStyle(tvAccessBadge, Color.parseColor("#3D2A0D"), LauncherConfig.COL_WARN);
+                            btnGrantAccess.setText("فتح تطبيق Shizuku");
                             btnGrantAccess.setVisibility(View.VISIBLE);
                         }
                         break;
                     default:
                         if (canAutoSaf) {
                             tvAccessBadge.setText("ربط مباشر عبر SAF");
-                            setBadgeStyle(tvAccessBadge, Color.parseColor("#241740"), LauncherConfig.COL_CYAN);
+                            setBadgeStyle(tvAccessBadge, Color.parseColor("#22153D"), LauncherConfig.COL_CYAN);
                             btnGrantAccess.setText("تحديد مجلد اللعبة تلقائياً");
                             btnGrantAccess.setVisibility(View.VISIBLE);
                         } else {
-                            tvAccessBadge.setText("يتطلب إعداد Shizuku");
-                            setBadgeStyle(tvAccessBadge, Color.parseColor("#3B2B12"), LauncherConfig.COL_WARN);
+                            tvAccessBadge.setText("يتطلب Shizuku");
+                            setBadgeStyle(tvAccessBadge, Color.parseColor("#3D2A0D"), LauncherConfig.COL_WARN);
                             btnGrantAccess.setText("إعداد الوصول عبر Shizuku");
                             btnGrantAccess.setVisibility(View.VISIBLE);
                         }
@@ -980,18 +1416,15 @@ public class MainActivity extends Activity {
                 }
 
                 if (fPatchInstalled) {
-                    String verLabel = fPatchVer.isEmpty() ? "مثبّت ومفعّل ✓" : ("مثبّت (v" + fPatchVer + ") ✓");
+                    String verLabel = fPatchVer.isEmpty() ? "مثبّت ومفعّل ✓" : ("مثبّت (" + fPatchVer + ") ✓");
                     tvPatchBadge.setText(verLabel);
-                    setBadgeStyle(tvPatchBadge, Color.parseColor("#143829"), LauncherConfig.COL_SUCCESS);
-                    btnInstallOnline.setText("تحديث / إعادة تثبيت التعريب أونلاين");
-                } else if (isReadyAccessMode(mode) && gameInstalled && !fGameReady) {
+                    setBadgeStyle(tvPatchBadge, Color.parseColor("#113826"), LauncherConfig.COL_SUCCESS);
+                } else if (accessOk && gameInstalled && !fGameReady) {
                     tvPatchBadge.setText("شغّل اللعبة مرة أولاً");
-                    setBadgeStyle(tvPatchBadge, Color.parseColor("#3B2B12"), LauncherConfig.COL_WARN);
-                    btnInstallOnline.setText("تثبيت التعريب أونلاين الآن");
+                    setBadgeStyle(tvPatchBadge, Color.parseColor("#3D2A0D"), LauncherConfig.COL_WARN);
                 } else {
                     tvPatchBadge.setText("غير مثبّت حالياً");
-                    setBadgeStyle(tvPatchBadge, Color.parseColor("#241740"), LauncherConfig.COL_CYAN);
-                    btnInstallOnline.setText("تثبيت التعريب أونلاين الآن");
+                    setBadgeStyle(tvPatchBadge, Color.parseColor("#22153D"), LauncherConfig.COL_CYAN);
                 }
 
                 updateRemoteCardUi();
@@ -1207,7 +1640,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (userTriggered) {
-            mainHandler.post(() -> tvRemoteInfo.setText("جارٍ الاتصال بـ GitHub للتحقق من آخر تحديث..."));
+            mainHandler.post(() -> tvRemoteInfo.setText("جارٍ الاتصال بـ GitHub للتحقق من آخر إصدار..."));
         }
         worker.execute(() -> {
             try {
@@ -1217,7 +1650,7 @@ public class MainActivity extends Activity {
             } catch (Throwable t) {
                 if (userTriggered) {
                     String err = t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName();
-                    mainHandler.post(() -> tvRemoteInfo.setText("تعذر جلب معلومات التحديث: " + err));
+                    mainHandler.post(() -> tvRemoteInfo.setText("لا يوجد إصدار أونلاين منشور حالياً (" + err + ") — استخدم التثبيت من ملف ZIP."));
                 }
             }
         });
@@ -1229,9 +1662,9 @@ public class MainActivity extends Activity {
             return;
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("أحدث إصدار متاح: v").append(m.patchVersion);
+        sb.append("أحدث إصدار أونلاين: v").append(m.patchVersion);
         if (!m.gameVersion.isEmpty()) {
-            sb.append(" • متوافق مع اللعبة: v").append(m.gameVersion)
+            sb.append(" • متوافق مع v").append(m.gameVersion)
                     .append(" (#").append(m.targetGameVersionCode).append(")");
         }
         if (!m.releaseDate.isEmpty()) {
@@ -1239,7 +1672,7 @@ public class MainActivity extends Activity {
         }
         if (isPatchCurrentlyInstalled && !installedPatchVersion.isEmpty()
                 && !installedPatchVersion.equals(m.patchVersion)) {
-            sb.append("\n★ يتوفر إصدار تعريب أحدث من المثبّت حالياً (v").append(installedPatchVersion).append(")!");
+            sb.append("\n★ يتوفر إصدار تعريب أحدث من المثبّت حالياً!");
         }
         if (!m.changelog.isEmpty()) {
             sb.append("\n• ").append(m.changelog);
@@ -1249,7 +1682,7 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================================
-    // تدفقات التثبيت المحمية بحارس الأمان + الاستعادة
+    // تدفقات التثبيت المحمية بحارس الأمان + الاستعادة + الفحص التشخيصي
     // =========================================================================
 
     private void startOnlineInstallFlow() {
@@ -1261,7 +1694,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!LauncherConfig.isOnlineUrlConfigured()) {
-            Toast.makeText(this, "لم يتم ضبط رابط التحميل في LauncherConfig.java بعد. استخدم «تثبيت من ملف ZIP محلي» للاختبار.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "استخدم زر «تثبيت / تحديث التعريب (ZIP)» لاختيار ملف التعريب المحلي.", Toast.LENGTH_LONG).show();
             return;
         }
 
@@ -1273,7 +1706,7 @@ public class MainActivity extends Activity {
                 return;
             }
 
-            setBusyUi(true, "جارٍ جلب معلومات آخر تحديث وفحص توافق حارس الأمان...", 5);
+            setBusyUi(true, "جارٍ جلب معلومات آخر تحديث وفحص حارس الأمان...", 5);
             File workDir = new File(getHintDir(), "jojo_gh_patch_work");
             File stageDir = new File(workDir, "stage");
             File zipFile = new File(workDir, "patch.zip");
@@ -1366,15 +1799,15 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                updateProgress(15, "جارٍ استخراج حزمة التعريب المحلية...");
+                updateProgress(15, "جارٍ استخراج حزمة التعريب...");
                 ShellBridgeServer.deleteRecursive(workDir);
                 stageDir.mkdirs();
 
                 PatchDownloader.extractZipUri(this, zipUri, stageDir, this::updateProgress, 20, 58);
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
-                executeInstallFromStage(mode, effectiveStage, "local", LauncherConfig.GAME_TARGET_SUBPATH);
+                executeInstallFromStage(mode, effectiveStage, "v3-full", LauncherConfig.GAME_TARGET_SUBPATH);
             } catch (Throwable t) {
-                showErrorState("فشل تثبيت الحزمة المحلية: " + readableError(t));
+                showErrorState("فشل تثبيت الحزمة: " + readableError(t));
             } finally {
                 ShellBridgeServer.deleteRecursive(workDir);
                 setBusyUi(false, null, -1);
@@ -1430,7 +1863,7 @@ public class MainActivity extends Activity {
 
         String[] parts = result.split("\\|");
         String fileCount = parts.length >= 4 ? parts[3] : "";
-        updateProgress(100, "اكتمل تثبيت التعريب بنجاح (" + fileCount + " ملف) مع حفظ النسخة الاحتياطية الأصلية ✓");
+        updateProgress(100, "اكتمل تثبيت تعريب R.D.AV بنجاح (" + fileCount + " ملف) مع حفظ النسخة الاحتياطية ✓");
         mainHandler.post(() -> Toast.makeText(this, "تم تثبيت تعريب JoJo: Golden Hymn بنجاح ✓", Toast.LENGTH_LONG).show());
     }
 
@@ -1439,7 +1872,7 @@ public class MainActivity extends Activity {
             return;
         }
         AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-        b.setTitle("استعادة الملفات الأصلية");
+        b.setTitle("استعادة النسخة الأصلية");
         b.setMessage("هل تريد إزالة التعريب واستعادة جميع ملفات JoJo: Golden Hymn الأصلية من النسخة الاحتياطية؟");
         b.setPositiveButton("نعم، استعادة الأصل", (d, w) -> runRestoreFlow());
         b.setNegativeButton("إلغاء", null);
@@ -1484,12 +1917,12 @@ public class MainActivity extends Activity {
             AccessMode mode = detectAccessMode();
             if (mode != AccessMode.BRIDGE_ACTIVE && mode != AccessMode.DIRECT_FS) {
                 mainHandler.post(() -> {
-                    Toast.makeText(this, "يلزم تفعيل Shizuku لتنفيذ الفحص التشخيصي لمسارات اللعبة.", Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, "يلزم تفعيل Shizuku لفحص سلامة الملفات وبصمة MD5.", Toast.LENGTH_LONG).show();
                     requestBestAccessInteractive();
                 });
                 return;
             }
-            setBusyUi(true, "جارٍ فحص مجلدات JoJo: Golden Hymn وبصمة ملف اللغة والفهرس...", 40);
+            setBusyUi(true, "جارٍ فحص سلامة ملفات JoJo: Golden Hymn وبصمة MD5...", 40);
             try {
                 String resp = (mode == AccessMode.BRIDGE_ACTIVE)
                         ? sendBridgeCommand("SCAN_DIAG\t" + getHintDir().getAbsolutePath(), 30000)
@@ -1498,12 +1931,13 @@ public class MainActivity extends Activity {
                     throw new IllegalStateException("تعذر إتمام الفحص: " + resp);
                 }
                 String report = resp.substring(3).replace("\\n", "\n");
-                updateProgress(100, "اكتمل الفحص التشخيصي لمسارات اللعبة ✓");
+                updateProgress(100, "اكتمل فحص سلامة الملفات بنجاح ✓");
                 mainHandler.post(() -> showDiagnosticReportDialog(report));
             } catch (Throwable t) {
                 showErrorState("خطأ أثناء الفحص: " + readableError(t));
             } finally {
                 setBusyUi(false, null, -1);
+                refreshStatusAsync(null);
             }
         });
     }
@@ -1520,7 +1954,7 @@ public class MainActivity extends Activity {
         sv.addView(tv);
 
         AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-        b.setTitle("تقرير فحص مسارات JoJo: Golden Hymn");
+        b.setTitle("تقرير فحص سلامة ملفات JoJo: Golden Hymn");
         b.setView(sv);
         b.setPositiveButton("نسخ التقرير", (d, w) -> {
             try {
@@ -1606,6 +2040,8 @@ public class MainActivity extends Activity {
 
     private void showErrorState(String msg) {
         mainHandler.post(() -> {
+            tvHeadlineStatus.setText("تنبيه أثناء العملية");
+            tvHeadlineStatus.setTextColor(LauncherConfig.COL_WARN);
             tvStatusText.setText(msg);
             tvProgressPercent.setText("تنبيه");
         });
@@ -1623,6 +2059,10 @@ public class MainActivity extends Activity {
             btnGrantAccess.setEnabled(!busy);
             btnCheckUpdate.setEnabled(!busy);
             btnLaunchGame.setEnabled(!busy);
+            if (busy) {
+                tvHeadlineStatus.setText("جارٍ التنفيذ...");
+                tvHeadlineStatus.setTextColor(LauncherConfig.COL_GOLD);
+            }
             if (statusMsg != null) {
                 tvStatusText.setText(statusMsg);
             }

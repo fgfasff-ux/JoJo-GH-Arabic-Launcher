@@ -3,8 +3,8 @@ package com.jojo.gh.arabic.launcher;
 import android.graphics.Color;
 
 /**
- * ملف الإعدادات المركزي لمعرّب لعبة JoJo's Bizarre Adventure: Golden Hymn.
- * يتضمن إعدادات حارس الأمان (Version Safety Guard) المرتبطة برقم إصدار اللعبة وبصمة ملف اللغة الأصلي.
+ * ملف الإعدادات المركزي لمعرّب لعبة JoJo's Bizarre Adventure: Golden Hymn (تعريب R.D.AV).
+ * يتضمن إعدادات حارس الأمان (Version Safety Guard) المرتبطة برقم إصدار اللعبة وبصمة ملف اللغة.
  */
 public final class LauncherConfig {
 
@@ -14,11 +14,20 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "1.0.5";
-    public static final String APP_TITLE = "معرّب JoJo's Bizarre Adventure: Golden Hymn";
-    public static final String APP_SUBTITLE = "مثبّت ذكي مع حارس الأمان والنسخ الاحتياطي (Shizuku & SAF)";
-    public static final String BADGE_LABEL = "تعريب JoJo: Golden Hymn";
-    public static final String FOOTER_TEXT = "JoJo GH Arabic Launcher • الإصدار " + APP_VERSION;
+    public static final String APP_VERSION = "1.1.0";
+    public static final String BRAND_TITLE = "تعريب R.D.AV";
+    public static final String APP_TITLE = "JoJo's Bizarre Adventure: Golden Hymn";
+    public static final String APP_SUBTITLE = "الرياح الذهبية • تعريب عربي فصيح كامل مع حارس الأمان";
+    public static final String BADGE_LABEL = "تعريب R.D.AV • v" + APP_VERSION;
+    public static final String INSTAGRAM_HANDLE = "R.D.AV";
+    public static final String INSTAGRAM_URL = "https://www.instagram.com/r.d.av/";
+    public static final String FOOTER_TEXT = "تعريب R.D.AV • JoJo GH Arabic Launcher v" + APP_VERSION;
+
+    // إحصائيات المشروع الفعلية المعروضة في شريط الواجهة
+    public static final String STAT_LINES = "15,967 نصاً معرّباً بالفصحى";
+    public static final String STAT_SCOPE = "القوائم والمهارات والشخصيات والقصة";
+    public static final String STAT_COMPAT = "متوافق 100% مع الإصدار 1.0.21";
+    public static final String STAT_SAFETY = "حارس أمان واستعادة أصل بضغطة زر";
 
     // =========================================================================
     // 2) إعدادات اللعبة المستهدفة (مستخرجة رسمياً من XAPK 1.0.21)
@@ -102,24 +111,27 @@ public final class LauncherConfig {
     // 4) إعدادات جسر Shizuku المحلي (منفذ مستقل عن لانشر DBL)
     // =========================================================================
     public static final int BRIDGE_PORT = 38922;
-    public static final String BRIDGE_REV = "r8";
+    public static final String BRIDGE_REV = "r9";
     public static final String SHIZUKU_PACKAGE = "moe.shizuku.privileged.api";
 
     // =========================================================================
-    // 5) ألوان الواجهة (ثيم Golden Hymn: بنفسجي ملكي + ذهبي)
+    // 5) ألوان الواجهة الليلية الفخمة (ثيم Giorno Giovanna: ذهبي + بنفسجي ملكي)
     // =========================================================================
-    public static final int COL_BG = Color.parseColor("#0D0819");
-    public static final int COL_CARD = Color.parseColor("#18102D");
-    public static final int COL_CARD_INNER = Color.parseColor("#110B21");
-    public static final int COL_BORDER = Color.parseColor("#35245E");
-    public static final int COL_ACCENT = Color.parseColor("#F59E0B");     // ذهبي Golden Hymn
-    public static final int COL_GOLD = Color.parseColor("#FDE047");       // ذهبي ساطع
-    public static final int COL_CYAN = Color.parseColor("#C084FC");       // بنفسجي مضيء
+    public static final int COL_BG = Color.parseColor("#080512");          // خلفية ليلية عميقة
+    public static final int COL_BG_BOTTOM = Color.parseColor("#130A24");   // تدرج ليلي بنفسجي
+    public static final int COL_CARD = Color.parseColor("#140D26");        // بطاقة زجاجية داكنة
+    public static final int COL_CARD_INNER = Color.parseColor("#0E081C");  // طبقة داخلية داكنة
+    public static final int COL_BORDER = Color.parseColor("#3B256B");      // إطار بنفسجي مضيء
+    public static final int COL_BORDER_GOLD = Color.parseColor("#B47B17"); // إطار ذهبي ناعم
+    public static final int COL_ACCENT = Color.parseColor("#F59E0B");      // ذهبي الرياح الذهبية
+    public static final int COL_GOLD = Color.parseColor("#FDE047");        // ذهبي ساطع
+    public static final int COL_PURPLE = Color.parseColor("#A855F7");      // بنفسجي جورنو
+    public static final int COL_CYAN = Color.parseColor("#D8B4FE");        // بنفسجي لافندر مضيء
     public static final int COL_TEXT = Color.parseColor("#F8FAFC");
-    public static final int COL_MUTED = Color.parseColor("#A799C4");
+    public static final int COL_MUTED = Color.parseColor("#A594C7");
     public static final int COL_SUCCESS = Color.parseColor("#22C55E");
     public static final int COL_WARN = Color.parseColor("#F59E0B");
-    public static final int COL_DANGER = Color.parseColor("#EF4444");
+    public static final int COL_DANGER = Color.parseColor("#F43F5E");
 
     public static boolean isOnlineUrlConfigured() {
         if (MANIFEST_URL != null && !MANIFEST_URL.trim().isEmpty()
