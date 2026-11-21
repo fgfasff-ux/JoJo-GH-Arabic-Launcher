@@ -14,7 +14,7 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "1.1.1";
+    public static final String APP_VERSION = "1.1.2";
     public static final String BRAND_TITLE = "تعريب R.D.AV";
     public static final String APP_TITLE = "JoJo's Bizarre Adventure: Golden Hymn";
     public static final String APP_SUBTITLE = "الرياح الذهبية • تعريب عربي فصيح كامل مع حارس الأمان";
@@ -111,7 +111,7 @@ public final class LauncherConfig {
     // 4) إعدادات جسر Shizuku المحلي (منفذ مستقل عن لانشر DBL)
     // =========================================================================
     public static final int BRIDGE_PORT = 38922;
-    public static final String BRIDGE_REV = "r10";
+    public static final String BRIDGE_REV = "r11";
     public static final String SHIZUKU_PACKAGE = "moe.shizuku.privileged.api";
 
     // =========================================================================

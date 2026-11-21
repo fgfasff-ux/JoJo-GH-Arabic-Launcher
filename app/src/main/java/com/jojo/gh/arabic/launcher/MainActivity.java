@@ -117,12 +117,28 @@ public class MainActivity extends Activity {
     private String bridgeAuthToken = "";
 
     // مشغّل الفيديو المحلي الخفيف (TextureView + MediaPlayer)
+    private static final float PROMO_FADE_DURATION_MS = 5000f;
+    private static final long PROMO_FADE_TICK_MS = 100L;
     private TextureView promoTextureView;
     private MediaPlayer promoPlayer;
     private Surface promoSurface;
     private boolean promoPrepared = false;
     private boolean isPromoMuted = false;
     private TextView btnPromoAudio;
+    private final Runnable promoFadeRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (promoPlayer != null && promoPrepared) {
+                try {
+                    if (promoPlayer.isPlaying()) {
+                        applyPromoVolume();
+                        mainHandler.postDelayed(this, PROMO_FADE_TICK_MS);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    };
     private final Runnable hidePromoAudioRunnable = new Runnable() {
         @Override
         public void run() {
@@ -242,6 +258,7 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         mainHandler.removeCallbacks(hidePromoAudioRunnable);
+        mainHandler.removeCallbacks(promoFadeRunnable);
         pausePromoVideo();
     }
 
@@ -249,6 +266,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         mainHandler.removeCallbacks(hidePromoAudioRunnable);
+        mainHandler.removeCallbacks(promoFadeRunnable);
         releasePromoVideo();
         try {
             Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener);
@@ -259,17 +277,40 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================================
-    // إدارة مشغّل الفيديو الترويجي المحلي مع التحكم بالصوت والتلاشي التلقائي
+    // إدارة مشغّل الفيديو الترويجي المحلي مع تدرج الصوت (Fade-In/Out 5s) وزر الكتم
     // =========================================================================
+
+    private float computePromoFadeVolume(int posMs, int durMs) {
+        if (isPromoMuted) {
+            return 0f;
+        }
+        if (durMs <= 0) {
+            return 1f;
+        }
+        if (posMs < PROMO_FADE_DURATION_MS) {
+            return Math.max(0f, Math.min(1f, posMs / PROMO_FADE_DURATION_MS));
+        }
+        int remaining = durMs - posMs;
+        if (remaining < PROMO_FADE_DURATION_MS) {
+            return Math.max(0f, Math.min(1f, remaining / PROMO_FADE_DURATION_MS));
+        }
+        return 1f;
+    }
 
     private void applyPromoVolume() {
         try {
-            if (promoPlayer != null) {
-                float vol = isPromoMuted ? 0f : 1f;
+            if (promoPlayer != null && promoPrepared) {
+                float vol = computePromoFadeVolume(promoPlayer.getCurrentPosition(), promoPlayer.getDuration());
                 promoPlayer.setVolume(vol, vol);
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    private void startPromoFadeTicker() {
+        mainHandler.removeCallbacks(promoFadeRunnable);
+        applyPromoVolume();
+        mainHandler.postDelayed(promoFadeRunnable, PROMO_FADE_TICK_MS);
     }
 
     private void showPromoAudioControlTemporarily() {
@@ -306,17 +347,27 @@ public class MainActivity extends Activity {
 
             promoSurface = new Surface(st);
             mp.setSurface(promoSurface);
-            mp.setLooping(true);
-            float initVol = isPromoMuted ? 0f : 1f;
-            mp.setVolume(initVol, initVol);
+            mp.setLooping(false);
+            mp.setVolume(0f, 0f);
             mp.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
             mp.setOnPreparedListener(player -> {
                 promoPrepared = true;
                 try {
-                    float v = isPromoMuted ? 0f : 1f;
-                    player.setVolume(v, v);
-                    player.setLooping(true);
+                    player.setVolume(0f, 0f);
+                    player.seekTo(0);
                     player.start();
+                    startPromoFadeTicker();
+                } catch (Throwable ignored) {
+                }
+            });
+            mp.setOnCompletionListener(player -> {
+                try {
+                    if (promoPlayer == player && promoPrepared) {
+                        player.setVolume(0f, 0f);
+                        player.seekTo(0);
+                        player.start();
+                        startPromoFadeTicker();
+                    }
                 } catch (Throwable ignored) {
                 }
             });
@@ -340,6 +391,7 @@ public class MainActivity extends Activity {
     }
 
     private void pausePromoVideo() {
+        mainHandler.removeCallbacks(promoFadeRunnable);
         try {
             if (promoPlayer != null && promoPrepared && promoPlayer.isPlaying()) {
                 promoPlayer.pause();
@@ -353,12 +405,14 @@ public class MainActivity extends Activity {
             if (promoPlayer != null && promoPrepared && !promoPlayer.isPlaying()) {
                 applyPromoVolume();
                 promoPlayer.start();
+                startPromoFadeTicker();
             }
         } catch (Throwable ignored) {
         }
     }
 
     private void releasePromoVideo() {
+        mainHandler.removeCallbacks(promoFadeRunnable);
         promoPrepared = false;
         if (promoPlayer != null) {
             try {
