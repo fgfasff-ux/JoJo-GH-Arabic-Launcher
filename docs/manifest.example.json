@@ -1,0 +1,14 @@
+{
+  "patch_version": "1.0.0",
+  "game_version": "1.0.21",
+  "target_game_version_code": 21,
+  "expected_lang_orig_md5": "22C346BBFB12F16B6D7AE6D44EF855A9",
+  "expected_lang_orig_size": 5429509,
+  "expected_force_conf_size": 223559,
+  "release_date": "2026-11-21",
+  "changelog": "الإصدار الأولي لتعريب JoJo's Bizarre Adventure: Golden Hymn.",
+  "download_url": "https://github.com/fgfasff-ux/JoJo-GH-Arabic-Launcher/releases/download/v1.0.0/jojo_gh_arabic_patch.zip",
+  "sha256": "",
+  "size_bytes": 0,
+  "target_subpath": ""
+}
