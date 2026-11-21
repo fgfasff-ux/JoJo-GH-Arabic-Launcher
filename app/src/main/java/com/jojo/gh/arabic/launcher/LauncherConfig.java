@@ -43,9 +43,9 @@ public final class LauncherConfig {
     public static final long TARGET_LANG_ORIG_SIZE = 5429509L;
     public static final String TARGET_LANG_ORIG_MD5 = "22C346BBFB12F16B6D7AE6D44EF855A9";
 
-    /** الحجم وبصمة MD5 المعتمدة لحزمة تعريب القوائم (jojo_test_menus_v3.zip) لإصدار 1.0.21 */
-    public static final long TARGET_LANG_PATCHED_SIZE = 5471705L;
-    public static final String TARGET_LANG_PATCHED_MD5 = "063D0E9A7AC8B0B1F317377C68F91DE1";
+    /** الحجم وبصمة MD5 المعتمدة لحزمة التعريب الكاملة (jojo_full_arabic_v1.zip) لإصدار 1.0.21 */
+    public static final long TARGET_LANG_PATCHED_SIZE = 5646582L;
+    public static final String TARGET_LANG_PATCHED_MD5 = "6010D960164F746F1D03EA5E26BF34F2";
 
     /** مسار وحجم ملف الفهرس الأساسي config/force.conf في إصدار 1.0.21 */
     public static final String TARGET_INDEX_REL_PATH = "config/force.conf";
@@ -102,7 +102,7 @@ public final class LauncherConfig {
     // 4) إعدادات جسر Shizuku المحلي (منفذ مستقل عن لانشر DBL)
     // =========================================================================
     public static final int BRIDGE_PORT = 38922;
-    public static final String BRIDGE_REV = "r4";
+    public static final String BRIDGE_REV = "r5";
     public static final String SHIZUKU_PACKAGE = "moe.shizuku.privileged.api";
 
     // =========================================================================
