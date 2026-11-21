@@ -1,4 +1,4 @@
-name: Build JoJo GH Android APK
+name: Build Signed Release JoJo GH Android APK
 
 on:
   push:
@@ -23,11 +23,48 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build Debug APK
-        run: gradle assembleDebug
+      - name: Decode Release Keystore (ephemeral runner temp)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ERROR: KEYSTORE_BASE64 secret is missing!"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release-keystore.jks"
+          chmod 600 "$RUNNER_TEMP/release-keystore.jks"
 
-      - name: Upload APK artifact
+      - name: Build Signed & Obfuscated Release APK (R8 + ShrinkResources)
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release-keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleRelease
+
+      - name: Verify APK Signature & Obfuscation (No Plaintext Secrets in DEX)
+        run: |
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          ls -lh "$APK_PATH"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
+          # Verify zero plaintext MD5 or GitHub URL strings leaked in classes.dex
+          unzip -p "$APK_PATH" classes.dex > "$RUNNER_TEMP/classes.dex"
+          for SECRET in "22C346BBFB12F16B6D7AE6D44EF855A9" "E1CE81B4751732FE006AC82F8513D1B7" "12430EBDE5529792C961FF68002D031E" "releases/latest/download/manifest.json"; do
+            if grep -a -q "$SECRET" "$RUNNER_TEMP/classes.dex"; then
+              echo "SECURITY FAILURE: Plaintext secret found in classes.dex: $SECRET"
+              exit 1
+            fi
+          done
+          echo "SECURITY CHECK PASSED: 0 plaintext MD5/URL/cert strings found in classes.dex!"
+          rm -f "$RUNNER_TEMP/classes.dex"
+
+      - name: Clean up ephemeral keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release-keystore.jks"
+
+      - name: Upload Signed Release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: jojo-gh-arabic-launcher-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: jojo-gh-arabic-launcher-v1.2.0-release-apk
+          path: app/build/outputs/apk/release/app-release.apk

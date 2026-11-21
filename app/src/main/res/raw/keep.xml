@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/bg_promo,@drawable/ic_jojo_game,@drawable/bg_promo_poster,@drawable/ic_launcher" />

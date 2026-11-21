@@ -212,6 +212,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!SignatureGuard.verifyOrTerminate(this)) {
+            return;
+        }
         requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
         getWindow().setStatusBarColor(LauncherConfig.COL_BG);
         getWindow().setNavigationBarColor(LauncherConfig.COL_BG_BOTTOM);
