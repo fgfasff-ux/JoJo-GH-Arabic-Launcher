@@ -14,7 +14,7 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "2.2.0";
+    public static final String APP_VERSION = "3.0.0";
     public static final String BRAND_TITLE = "تعريب R.D.AV";
     public static final String HUB_TITLE = "R.D.AV Multi-Game Hub";
     public static final String HUB_SUBTITLE = "منصة تعريب الألعاب العربية الفصحى • متعدد الألعاب";
@@ -99,22 +99,23 @@ public final class LauncherConfig {
     public static final String SHIZUKU_PACKAGE = SecretVault.shizukuPackage();
 
     // =========================================================================
-    // 5) ألوان الواجهة الليلية الفخمة (ثيم Giorno Giovanna)
+    // 5) لوحة الألوان التحريرية الفخمة (Luxury Dark-Teal & Gold Editorial Theme)
     // =========================================================================
-    public static final int COL_BG = Color.parseColor("#080512");
-    public static final int COL_BG_BOTTOM = Color.parseColor("#130A24");
-    public static final int COL_CARD = Color.parseColor("#140D26");
-    public static final int COL_CARD_INNER = Color.parseColor("#0E081C");
-    public static final int COL_BORDER = Color.parseColor("#3B256B");
-    public static final int COL_BORDER_GOLD = Color.parseColor("#B47B17");
-    public static final int COL_ACCENT = Color.parseColor("#F59E0B");
-    public static final int COL_GOLD = Color.parseColor("#FDE047");
-    public static final int COL_PURPLE = Color.parseColor("#A855F7");
-    public static final int COL_CYAN = Color.parseColor("#D8B4FE");
-    public static final int COL_TEXT = Color.parseColor("#F8FAFC");
-    public static final int COL_MUTED = Color.parseColor("#A594C7");
+    public static final int COL_BG = Color.parseColor("#07121A");
+    public static final int COL_BG_BOTTOM = Color.parseColor("#0B1E28");
+    public static final int COL_CARD = Color.parseColor("#0B1A24");
+    public static final int COL_CARD_INNER = Color.parseColor("#08141C");
+    public static final int COL_BORDER = Color.parseColor("#59C8A252");
+    public static final int COL_BORDER_GOLD = Color.parseColor("#C8A252");
+    public static final int COL_ACCENT = Color.parseColor("#C8A252");
+    public static final int COL_GOLD = Color.parseColor("#F3D078");
+    public static final int COL_GOLD_SOLID = Color.parseColor("#DCB560");
+    public static final int COL_PURPLE = Color.parseColor("#1D4E63");
+    public static final int COL_CYAN = Color.parseColor("#67D4F5");
+    public static final int COL_TEXT = Color.parseColor("#F4F8FB");
+    public static final int COL_MUTED = Color.parseColor("#8FA8B8");
     public static final int COL_SUCCESS = Color.parseColor("#22C55E");
-    public static final int COL_WARN = Color.parseColor("#F59E0B");
+    public static final int COL_WARN = Color.parseColor("#EAB308");
     public static final int COL_DANGER = Color.parseColor("#F43F5E");
 
     public static boolean isOnlineUrlConfigured() {

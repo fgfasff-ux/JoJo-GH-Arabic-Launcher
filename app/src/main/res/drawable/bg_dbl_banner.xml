@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <!-- Deep teal-navy backdrop -->
+    <path
+        android:fillColor="#091822"
+        android:pathData="M0,0h320v180h-320z" />
+    <!-- Dynamic orange-gold energy aura -->
+    <path
+        android:fillColor="#26F97316"
+        android:pathData="M160,12 C230,12 285,55 285,105 C285,145 230,175 160,175 C90,175 35,145 35,105 C35,55 90,12 160,12 Z" />
+    <path
+        android:fillColor="#33F59E0B"
+        android:pathData="M160,34 C205,34 240,62 240,95 C240,128 205,152 160,152 C115,152 80,128 80,95 C80,62 115,34 160,34 Z" />
+    <!-- Diagonal speed beams -->
+    <path
+        android:fillColor="#2238BDF8"
+        android:pathData="M0,130 L125,0 L165,0 L25,155 Z" />
+    <path
+        android:fillColor="#1EF3D078"
+        android:pathData="M210,0 L320,0 L195,180 L145,180 Z" />
+    <!-- Stylized Four-Star Dragon Ball Centerpiece -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M160,44 A42,42 0 1,0 160,128 A42,42 0 1,0 160,44 Z" />
+    <path
+        android:fillColor="#FDE047"
+        android:pathData="M148,54 A15,10 0 1,0 148,74 A15,10 0 1,0 148,54 Z" />
+    <!-- 4 Crimson Stars -->
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M148,74 L150,79 L155,79 L151,82 L152,87 L148,84 L144,87 L145,82 L141,79 L146,79 Z" />
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M172,74 L174,79 L179,79 L175,82 L176,87 L172,84 L168,87 L169,82 L165,79 L170,79 Z" />
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M148,96 L150,101 L155,101 L151,104 L152,109 L148,106 L144,109 L145,104 L141,101 L146,101 Z" />
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M172,96 L174,101 L179,101 L175,104 L176,109 L172,106 L168,109 L169,104 L165,101 L170,101 Z" />
+</vector>

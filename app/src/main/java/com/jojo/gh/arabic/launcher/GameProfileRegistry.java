@@ -61,7 +61,7 @@ public final class GameProfileRegistry {
                     Color.parseColor("#F97316"),
                     Color.parseColor("#2563EB"),
                     R.drawable.ic_dbl_coming_soon,
-                    R.drawable.ic_dbl_coming_soon,
+                    R.drawable.bg_dbl_banner,
                     0,
                     "",
                     "",
