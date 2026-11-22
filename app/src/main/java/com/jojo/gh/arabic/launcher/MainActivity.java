@@ -193,11 +193,11 @@ public class MainActivity extends Activity {
     private ProgressBar progressBar;
     private Button btnGrantAccess;
     private Button btnCheckUpdate;
-    private Button btnInstallOnline;
-    private Button btnInstallLocalZip;
-    private Button btnDiagScan;
+    private View btnInstallOnline;
+    private View btnInstallLocalZip;
+    private View btnDiagScan;
     private Button btnLaunchGame;
-    private Button btnRestore;
+    private View btnRestore;
     private ImageView ivHubLogo;
     private TextView tvStatLinesChip;
     private TextView tvStatCompatChip;
@@ -808,16 +808,8 @@ public class MainActivity extends Activity {
         hvLp.leftMargin = dp(8);
         topPills.addView(hubVer, hvLp);
 
-        TextView igHome = makeText("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE + " ↗", 10.5f, Color.WHITE, true);
-        igHome.setPadding(dp(12), dp(5), dp(12), dp(5));
-        GradientDrawable igBg = new GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{Color.parseColor("#7C2D8C"), Color.parseColor("#C13584"), Color.parseColor("#D97706")}
-        );
-        igBg.setCornerRadius(dp(10));
-        igBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
-        igHome.setBackground(igBg);
-        igHome.setOnClickListener(v -> openUrl(LauncherConfig.INSTAGRAM_URL));
+        View igHome = makeInstagramPill("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE + " ↗", 10.5f, 14, 12, 5);
+        igHome.setOnClickListener(v -> openInstagramSupport());
         topPills.addView(igHome);
 
         studioCard.addView(topPills, tpLp);
@@ -1172,16 +1164,8 @@ public class MainActivity extends Activity {
         verLp.leftMargin = dp(8);
         pillsRow.addView(verPill, verLp);
 
-        TextView igPill = makeText("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE + " ↗", 11f, Color.WHITE, true);
-        igPill.setPadding(dp(12), dp(5), dp(12), dp(5));
-        GradientDrawable igBg = new GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{Color.parseColor("#7C2D8C"), Color.parseColor("#C13584"), Color.parseColor("#D97706")}
-        );
-        igBg.setCornerRadius(dp(10));
-        igBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
-        igPill.setBackground(igBg);
-        igPill.setOnClickListener(v -> openUrl(LauncherConfig.INSTAGRAM_URL));
+        View igPill = makeInstagramPill("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE + " ↗", 10.8f, 14, 12, 5);
+        igPill.setOnClickListener(v -> openInstagramSupport());
         pillsRow.addView(igPill);
 
         headerCard.addView(pillsRow, pillsLp);
@@ -1280,6 +1264,59 @@ public class MainActivity extends Activity {
         promoCard.addView(promoInner, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, dp(186)));
         root.addView(promoCard, makeCardLp());
+
+        // ---------------------------------------------------------------------
+        // 2.5) بطاقة معلومات اللعبة من المتجر (مباشرة أسفل البانر المرئي بشعار Google Play)
+        // ---------------------------------------------------------------------
+        LinearLayout storeCard = makeCard(LauncherConfig.COL_BORDER);
+
+        LinearLayout storeHdrRow = new LinearLayout(this);
+        storeHdrRow.setOrientation(LinearLayout.HORIZONTAL);
+        storeHdrRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams shRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        shRowLp.bottomMargin = dp(8);
+
+        ImageView ivPlayLogo = new ImageView(this);
+        ivPlayLogo.setImageResource(R.drawable.ic_google_play);
+        ivPlayLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams playIconLp = new LinearLayout.LayoutParams(dp(20), dp(20));
+        playIconLp.leftMargin = dp(8);
+        storeHdrRow.addView(ivPlayLogo, playIconLp);
+
+        TextView storeHdr = makeText("معلومات اللعبة من المتجر (Google Play)", 12.2f, LauncherConfig.COL_TEXT, true);
+        storeHdrRow.addView(storeHdr, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        storeCard.addView(storeHdrRow, shRowLp);
+
+        LinearLayout storePillsRow = new LinearLayout(this);
+        storePillsRow.setOrientation(LinearLayout.HORIZONTAL);
+        storePillsRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams spRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        spRowLp.bottomMargin = dp(8);
+
+        tvStoreScorePill = makeStoreInfoPill("⭐ " + activeProfile.defaultStoreScore, LauncherConfig.COL_GOLD);
+        LinearLayout.LayoutParams scLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        scLp.leftMargin = dp(6);
+        storePillsRow.addView(tvStoreScorePill, scLp);
+
+        tvStoreInstallsPill = makeStoreInfoPill("⬇ " + activeProfile.defaultStoreInstalls, LauncherConfig.COL_SUCCESS);
+        LinearLayout.LayoutParams insLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        insLp.leftMargin = dp(6);
+        storePillsRow.addView(tvStoreInstallsPill, insLp);
+
+        tvStoreDevPill = makeStoreInfoPill("🏢 " + activeProfile.defaultStoreDeveloper, LauncherConfig.COL_CYAN);
+        storePillsRow.addView(tvStoreDevPill, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        storeCard.addView(storePillsRow, spRowLp);
+
+        tvStoreSummary = makeText(activeProfile.defaultStoreSummary, 11.2f, LauncherConfig.COL_MUTED, false);
+        tvStoreSummary.setLineSpacing(dp(3), 1f);
+        storeCard.addView(tvStoreSummary);
+
+        root.addView(storeCard, makeCardLp());
 
         // ---------------------------------------------------------------------
         // 3) بطاقة حالة التعريب وحارس الأمان + شريط التقدم + مسار الخطوات (4 مراحل)
@@ -1389,22 +1426,34 @@ public class MainActivity extends Activity {
         launchLp.bottomMargin = dp(9);
         root.addView(btnLaunchGame, launchLp);
 
-        // 2. صف التثبيت: تثبيت / تحديث التعريب (ZIP) + التحديث أونلاين
+        // 2. صف التثبيت: تثبيت / تحديث التعريب (ZIP - ثيم ذهبي) + تحديث أونلاين (GitHub - ثيم GitHub الداكن)
         LinearLayout rowInstall = new LinearLayout(this);
         rowInstall.setOrientation(LinearLayout.HORIZONTAL);
 
-        btnInstallLocalZip = makeButton("تثبيت / تحديث التعريب (ZIP)", Color.parseColor("#1D1236"), LauncherConfig.COL_GOLD, LauncherConfig.COL_BORDER_GOLD, true);
-        btnInstallLocalZip.setTextSize(12.5f);
+        btnInstallLocalZip = makeIconButton(
+                "تثبيت / تحديث التعريب (ZIP)",
+                R.drawable.ic_zip_folder,
+                Color.parseColor("#29200E"),
+                Color.parseColor("#FDE047"),
+                Color.parseColor("#F59E0B"),
+                11.8f
+        );
         btnInstallLocalZip.setOnClickListener(v -> openLocalZipPicker());
-        LinearLayout.LayoutParams zipLp = new LinearLayout.LayoutParams(0, dp(48), 1.15f);
-        zipLp.leftMargin = dp(6);
+        LinearLayout.LayoutParams zipLp = new LinearLayout.LayoutParams(0, dp(50), 1.08f);
+        zipLp.leftMargin = dp(5);
         rowInstall.addView(btnInstallLocalZip, zipLp);
 
-        btnInstallOnline = makeButton("تحديث أونلاين (GitHub)", Color.parseColor("#18102E"), LauncherConfig.COL_CYAN, LauncherConfig.COL_BORDER, true);
-        btnInstallOnline.setTextSize(12.5f);
+        btnInstallOnline = makeIconButton(
+                "تحديث أونلاين (GitHub)",
+                R.drawable.ic_github_mark,
+                Color.parseColor("#161B22"),
+                Color.parseColor("#F0F6FC"),
+                Color.parseColor("#30363D"),
+                11.8f
+        );
         btnInstallOnline.setOnClickListener(v -> startOnlineInstallFlow());
-        LinearLayout.LayoutParams onlineLp = new LinearLayout.LayoutParams(0, dp(48), 0.85f);
-        onlineLp.rightMargin = dp(6);
+        LinearLayout.LayoutParams onlineLp = new LinearLayout.LayoutParams(0, dp(50), 0.92f);
+        onlineLp.rightMargin = dp(5);
         rowInstall.addView(btnInstallOnline, onlineLp);
 
         LinearLayout.LayoutParams rowInstallLp = new LinearLayout.LayoutParams(
@@ -1412,22 +1461,34 @@ public class MainActivity extends Activity {
         rowInstallLp.bottomMargin = dp(9);
         root.addView(rowInstall, rowInstallLp);
 
-        // 3. صف الأدوات: فحص سلامة الملفات + استعادة النسخة الأصلية
+        // 3. صف الأدوات: فحص سلامة الملفات (ثيم زمردي) + استعادة النسخة الأصلية (ثيم أحمر)
         LinearLayout rowTools = new LinearLayout(this);
         rowTools.setOrientation(LinearLayout.HORIZONTAL);
 
-        btnDiagScan = makeButton("فحص سلامة الملفات", LauncherConfig.COL_CARD, LauncherConfig.COL_TEXT, LauncherConfig.COL_BORDER, true);
-        btnDiagScan.setTextSize(12.5f);
+        btnDiagScan = makeIconButton(
+                "فحص سلامة الملفات",
+                R.drawable.ic_shield_check,
+                Color.parseColor("#0E2921"),
+                Color.parseColor("#6EE7B7"),
+                Color.parseColor("#10B981"),
+                11.8f
+        );
         btnDiagScan.setOnClickListener(v -> runDiagnosticScanFlow());
-        LinearLayout.LayoutParams diagLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
-        diagLp.leftMargin = dp(6);
+        LinearLayout.LayoutParams diagLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        diagLp.leftMargin = dp(5);
         rowTools.addView(btnDiagScan, diagLp);
 
-        btnRestore = makeButton("استعادة النسخة الأصلية", Color.parseColor("#2B0E1E"), LauncherConfig.COL_DANGER, Color.parseColor("#7F1D3A"), true);
-        btnRestore.setTextSize(12.5f);
+        btnRestore = makeIconButton(
+                "استعادة النسخة الأصلية",
+                R.drawable.ic_restore_history,
+                Color.parseColor("#2B1117"),
+                Color.parseColor("#FDA4AF"),
+                Color.parseColor("#EF4444"),
+                11.8f
+        );
         btnRestore.setOnClickListener(v -> confirmAndRestore());
-        LinearLayout.LayoutParams restLp = new LinearLayout.LayoutParams(0, dp(46), 1f);
-        restLp.rightMargin = dp(6);
+        LinearLayout.LayoutParams restLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        restLp.rightMargin = dp(5);
         rowTools.addView(btnRestore, restLp);
 
         LinearLayout.LayoutParams rowToolsLp = new LinearLayout.LayoutParams(
@@ -1484,54 +1545,24 @@ public class MainActivity extends Activity {
         root.addView(statsCard, makeCardLp());
 
         // ---------------------------------------------------------------------
-        // 5.5) بطاقة معلومات اللعبة من المتجر (متزامنة تلقائياً عبر manifest.json)
+        // 6) بطاقة التحديثات أونلاين (GitHub Releases) والتذييل
         // ---------------------------------------------------------------------
-        LinearLayout storeCard = makeCard(LauncherConfig.COL_BORDER);
-        TextView storeHdr = makeText("معلومات اللعبة من المتجر (Google Play)", 12f, LauncherConfig.COL_CYAN, true);
-        storeHdr.setPadding(0, 0, 0, dp(8));
-        storeCard.addView(storeHdr);
-
-        LinearLayout storePillsRow = new LinearLayout(this);
-        storePillsRow.setOrientation(LinearLayout.HORIZONTAL);
-        storePillsRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams spRowLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        spRowLp.bottomMargin = dp(8);
-
-        tvStoreScorePill = makeStoreInfoPill("⭐ " + activeProfile.defaultStoreScore, LauncherConfig.COL_GOLD);
-        LinearLayout.LayoutParams scLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        scLp.leftMargin = dp(6);
-        storePillsRow.addView(tvStoreScorePill, scLp);
-
-        tvStoreInstallsPill = makeStoreInfoPill("⬇ " + activeProfile.defaultStoreInstalls, LauncherConfig.COL_SUCCESS);
-        LinearLayout.LayoutParams insLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        insLp.leftMargin = dp(6);
-        storePillsRow.addView(tvStoreInstallsPill, insLp);
-
-        tvStoreDevPill = makeStoreInfoPill("🏢 " + activeProfile.defaultStoreDeveloper, LauncherConfig.COL_CYAN);
-        storePillsRow.addView(tvStoreDevPill, new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        storeCard.addView(storePillsRow, spRowLp);
-
-        tvStoreSummary = makeText(activeProfile.defaultStoreSummary, 11.2f, LauncherConfig.COL_MUTED, false);
-        tvStoreSummary.setLineSpacing(dp(3), 1f);
-        storeCard.addView(tvStoreSummary);
-
-        root.addView(storeCard, makeCardLp());
-
-        // ---------------------------------------------------------------------
-        // 6) بطاقة التحديثات أونلاين والتذييل
-        // ---------------------------------------------------------------------
-        LinearLayout updateCard = makeCard(LauncherConfig.COL_BORDER);
+        LinearLayout updateCard = makeCard(Color.parseColor("#30363D"));
         LinearLayout updateHeader = new LinearLayout(this);
         updateHeader.setOrientation(LinearLayout.HORIZONTAL);
         updateHeader.setGravity(Gravity.CENTER_VERTICAL);
-        updateHeader.addView(makeText("تحديثات GitHub Releases", 12f, LauncherConfig.COL_CYAN, true),
+
+        ImageView ivGhHdr = new ImageView(this);
+        ivGhHdr.setImageResource(R.drawable.ic_github_mark);
+        ivGhHdr.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams ghHdrLp = new LinearLayout.LayoutParams(dp(18), dp(18));
+        ghHdrLp.leftMargin = dp(7);
+        updateHeader.addView(ivGhHdr, ghHdrLp);
+
+        updateHeader.addView(makeText("تحديثات GitHub Releases", 12f, Color.parseColor("#F0F6FC"), true),
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
-        btnCheckUpdate = makeButton("فحص التحديث", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_GOLD, LauncherConfig.COL_BORDER_GOLD, true);
+        btnCheckUpdate = makeButton("فحص التحديث", Color.parseColor("#161B22"), LauncherConfig.COL_GOLD, Color.parseColor("#30363D"), true);
         btnCheckUpdate.setTextSize(10.5f);
         btnCheckUpdate.setPadding(dp(10), dp(2), dp(10), dp(2));
         btnCheckUpdate.setOnClickListener(v -> checkOnlineUpdateAsync(true));
@@ -1545,24 +1576,34 @@ public class MainActivity extends Activity {
         updateCard.addView(tvRemoteInfo);
         root.addView(updateCard, makeCardLp());
 
-        // تذييل مع روابط سريعة
-        LinearLayout footerRow = new LinearLayout(this);
-        footerRow.setOrientation(LinearLayout.HORIZONTAL);
-        footerRow.setGravity(Gravity.CENTER);
-        footerRow.setPadding(0, dp(2), 0, dp(8));
+        // تذييل منسّق بسطرين (يمنع التفاف اسم Instagram على سطرين أبداً)
+        LinearLayout footerCol = new LinearLayout(this);
+        footerCol.setOrientation(LinearLayout.VERTICAL);
+        footerCol.setGravity(Gravity.CENTER_HORIZONTAL);
+        footerCol.setPadding(0, dp(4), 0, dp(10));
 
-        TextView tvFooter = makeText(LauncherConfig.FOOTER_TEXT + "  •  ", 10.5f, LauncherConfig.COL_MUTED, false);
-        TextView tvGitHubLink = makeText("GitHub", 10.5f, LauncherConfig.COL_CYAN, true);
-        tvGitHubLink.setOnClickListener(v -> openUrl(LauncherConfig.COMMUNITY_URL));
-        TextView tvSep = makeText("  •  ", 10.5f, LauncherConfig.COL_MUTED, false);
-        TextView tvIgFooter = makeText("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE, 10.5f, LauncherConfig.COL_GOLD, true);
-        tvIgFooter.setOnClickListener(v -> openUrl(LauncherConfig.INSTAGRAM_URL));
+        TextView tvFooter = makeText(LauncherConfig.FOOTER_TEXT, 10.5f, LauncherConfig.COL_MUTED, false);
+        tvFooter.setGravity(Gravity.CENTER);
+        tvFooter.setPadding(0, 0, 0, dp(8));
+        footerCol.addView(tvFooter);
 
-        footerRow.addView(tvFooter);
-        footerRow.addView(tvGitHubLink);
-        footerRow.addView(tvSep);
-        footerRow.addView(tvIgFooter);
-        root.addView(footerRow);
+        LinearLayout footerPillsRow = new LinearLayout(this);
+        footerPillsRow.setOrientation(LinearLayout.HORIZONTAL);
+        footerPillsRow.setGravity(Gravity.CENTER);
+
+        View ghFooterPill = makeGitHubPill("GitHub", 10.5f);
+        ghFooterPill.setOnClickListener(v -> openUrl(LauncherConfig.COMMUNITY_URL));
+        LinearLayout.LayoutParams gfLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        gfLp.leftMargin = dp(8);
+        footerPillsRow.addView(ghFooterPill, gfLp);
+
+        View igFooterPill = makeInstagramPill("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE, 10.5f, 14, 12, 5);
+        igFooterPill.setOnClickListener(v -> openInstagramSupport());
+        footerPillsRow.addView(igFooterPill);
+
+        footerCol.addView(footerPillsRow);
+        root.addView(footerCol);
 
         return scroll;
     }
@@ -1638,6 +1679,109 @@ public class MainActivity extends Activity {
         bg.setStroke(dp(1), Color.parseColor("#2D1D52"));
         tv.setBackground(bg);
         return tv;
+    }
+
+    /**
+     * زر احترافي بأيقونة Vector واضحة وخلفية وحدود متناسقة مع هوية الخدمة أو الوظيفة.
+     */
+    private LinearLayout makeIconButton(
+            String text,
+            int iconRes,
+            int bgColor,
+            int textColor,
+            int borderColor,
+            float textSizeSp
+    ) {
+        LinearLayout btn = new LinearLayout(this);
+        btn.setOrientation(LinearLayout.HORIZONTAL);
+        btn.setGravity(Gravity.CENTER);
+        btn.setClickable(true);
+        btn.setFocusable(true);
+        btn.setPadding(dp(10), dp(6), dp(10), dp(6));
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(bgColor);
+        bg.setCornerRadius(dp(13));
+        bg.setStroke(dp(1), borderColor);
+        btn.setBackground(bg);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(18), dp(18));
+        iconLp.leftMargin = dp(7);
+        btn.addView(icon, iconLp);
+
+        TextView lbl = makeText(text, textSizeSp, textColor, true);
+        lbl.setGravity(Gravity.CENTER);
+        lbl.setMaxLines(2);
+        btn.addView(lbl, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        return btn;
+    }
+
+    /**
+     * شارة/زر Instagram بأيقونة الكاميرا البيضاء وتدرج إنستغرام (#833AB4 -> #E1306C) بسطر واحد غير قابل للالتفاف.
+     */
+    private LinearLayout makeInstagramPill(String text, float textSizeSp, int iconSizeDp, int padHDp, int padVDp) {
+        LinearLayout pill = new LinearLayout(this);
+        pill.setOrientation(LinearLayout.HORIZONTAL);
+        pill.setGravity(Gravity.CENTER);
+        pill.setClickable(true);
+        pill.setFocusable(true);
+        pill.setPadding(dp(padHDp), dp(padVDp), dp(padHDp), dp(padVDp));
+
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#833AB4"), Color.parseColor("#E1306C")}
+        );
+        bg.setCornerRadius(dp(10));
+        bg.setStroke(dp(1), Color.parseColor("#F472B6"));
+        pill.setBackground(bg);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_instagram);
+        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(iconSizeDp), dp(iconSizeDp));
+        iconLp.leftMargin = dp(6);
+        pill.addView(icon, iconLp);
+
+        TextView lbl = makeText(text, textSizeSp, Color.WHITE, true);
+        lbl.setSingleLine(true);
+        lbl.setMaxLines(1);
+        pill.addView(lbl);
+        return pill;
+    }
+
+    /**
+     * شارة GitHub الداكنة (#161B22 / #30363D) مع شعار Octocat الأبيض.
+     */
+    private LinearLayout makeGitHubPill(String text, float textSizeSp) {
+        LinearLayout pill = new LinearLayout(this);
+        pill.setOrientation(LinearLayout.HORIZONTAL);
+        pill.setGravity(Gravity.CENTER);
+        pill.setClickable(true);
+        pill.setFocusable(true);
+        pill.setPadding(dp(12), dp(5), dp(12), dp(5));
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.parseColor("#161B22"));
+        bg.setCornerRadius(dp(10));
+        bg.setStroke(dp(1), Color.parseColor("#30363D"));
+        pill.setBackground(bg);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_github_mark);
+        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(14), dp(14));
+        iconLp.leftMargin = dp(6);
+        pill.addView(icon, iconLp);
+
+        TextView lbl = makeText(text, textSizeSp, Color.parseColor("#F0F6FC"), true);
+        lbl.setSingleLine(true);
+        lbl.setMaxLines(1);
+        pill.addView(lbl);
+        return pill;
     }
 
     private void syncDynamicIcon(GameProfile profile, String iconUrl) {
@@ -3246,20 +3390,8 @@ public class MainActivity extends Activity {
                 .setView(root)
                 .create();
 
-        // الزر البارز: إرسال التقرير إلى R.D.AV على Instagram
-        Button btnSendIg = new Button(this);
-        btnSendIg.setText("📩  إرسال التقرير إلى R.D.AV على Instagram");
-        btnSendIg.setAllCaps(false);
-        btnSendIg.setTextSize(13.5f);
-        btnSendIg.setTextColor(Color.WHITE);
-        btnSendIg.setTypeface(fontBold);
-        GradientDrawable igBtnBg = new GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT,
-                new int[]{Color.parseColor("#833AB4"), Color.parseColor("#C13584"), Color.parseColor("#F59E0B")}
-        );
-        igBtnBg.setCornerRadius(dp(12));
-        igBtnBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
-        btnSendIg.setBackground(igBtnBg);
+        // الزر البارز: إرسال التقرير إلى R.D.AV على Instagram (بأيقونة إنستغرام وتدرج #833AB4 -> #E1306C)
+        LinearLayout btnSendIg = makeInstagramPill("إرسال التقرير إلى R.D.AV على Instagram", 13.2f, 18, 14, 12);
         btnSendIg.setOnClickListener(v -> {
             copyReportToClipboard(report, false);
             openInstagramSupport();
@@ -3372,8 +3504,11 @@ public class MainActivity extends Activity {
     private void setBusyUi(boolean busy, String statusMsg, int percent) {
         isBusy = busy;
         mainHandler.post(() -> {
+            float alpha = busy ? 0.55f : 1f;
             btnInstallOnline.setEnabled(!busy);
+            btnInstallOnline.setAlpha(alpha);
             btnInstallLocalZip.setEnabled(!busy);
+            btnInstallLocalZip.setAlpha(alpha);
             if (btnInstallBeta != null) {
                 btnInstallBeta.setEnabled(!busy);
             }
@@ -3382,8 +3517,10 @@ public class MainActivity extends Activity {
             }
             if (btnDiagScan != null) {
                 btnDiagScan.setEnabled(!busy);
+                btnDiagScan.setAlpha(alpha);
             }
             btnRestore.setEnabled(!busy);
+            btnRestore.setAlpha(alpha);
             btnGrantAccess.setEnabled(!busy);
             btnCheckUpdate.setEnabled(!busy);
             btnLaunchGame.setEnabled(!busy);
