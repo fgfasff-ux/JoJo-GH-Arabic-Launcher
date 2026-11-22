@@ -335,8 +335,8 @@ public class MainActivity extends Activity {
 
         setContentView(buildRootContainer());
         applyDynamicMetadataToUi();
-        if (latestRemoteManifest != null && !latestRemoteManifest.iconUrl.isEmpty()) {
-            syncDynamicIcon(activeProfile, latestRemoteManifest.iconUrl);
+        if (latestRemoteManifest != null) {
+            syncDynamicMediaForManifest(activeProfile, latestRemoteManifest);
         }
         syncBetaModeUi();
         ensureLegacyStoragePermissions();
@@ -1167,28 +1167,31 @@ public class MainActivity extends Activity {
                 liveManifest.saveToCache(this, profile.id);
                 latestRemoteManifest = liveManifest;
 
-                // مزامنة الشعار والبانر الحي قبل عرض صفحة اللعبة لضمان ظهور أحدث الوسائط فوراً
+                // مزامنة الشعار والبانر بالتخزين الذكي بالبصمة (لا يُعاد التحميل إلا إذا تغيّرت البصمة!)
                 if (!liveManifest.iconUrl.isEmpty()) {
-                    GameIconCache.syncIconSync(this, profile.id, liveManifest.iconUrl);
+                    GameIconCache.syncIconSync(this, profile.id, liveManifest.iconUrl, liveManifest.iconHash);
                 }
                 String bannerUrl = liveManifest.getEffectiveBannerImageUrl();
                 if (!bannerUrl.isEmpty()) {
-                    GameIconCache.syncBannerSync(this, profile.id, bannerUrl);
+                    GameIconCache.syncBannerSync(this, profile.id, bannerUrl, liveManifest.getEffectiveBannerImageHash());
                 }
                 String videoUrl = liveManifest.getEffectiveHeroVideoUrl();
                 if (!videoUrl.isEmpty()) {
                     File cachedVid = GameIconCache.loadCachedHeroVideoFile(this, profile.id);
                     activeRemoteHeroVideoFile = cachedVid;
-                    GameIconCache.syncHeroVideoAsync(this, iconExecutor, mainHandler, profile.id, videoUrl, file -> {
-                        activeRemoteHeroVideoFile = file;
-                        usingRemoteBannerImage = false;
-                        if (isOnGameHub && promoTextureView != null) {
-                            promoTextureView.setVisibility(View.VISIBLE);
-                            if (promoTextureView.isAvailable()) {
-                                startPromoVideoOnSurface(promoTextureView.getSurfaceTexture());
-                            }
-                        }
-                    });
+                    GameIconCache.syncHeroVideoAsync(
+                            this, iconExecutor, mainHandler,
+                            profile.id, videoUrl, liveManifest.getEffectiveHeroVideoHash(),
+                            file -> {
+                                activeRemoteHeroVideoFile = file;
+                                usingRemoteBannerImage = false;
+                                if (isOnGameHub && promoTextureView != null) {
+                                    promoTextureView.setVisibility(View.VISIBLE);
+                                    if (promoTextureView.isAvailable()) {
+                                        startPromoVideoOnSurface(promoTextureView.getSurfaceTexture());
+                                    }
+                                }
+                            });
                 } else {
                     activeRemoteHeroVideoFile = null;
                 }
@@ -2591,11 +2594,11 @@ public class MainActivity extends Activity {
         return pill;
     }
 
-    private void syncDynamicIcon(GameProfile profile, String iconUrl) {
+    private void syncDynamicIcon(GameProfile profile, String iconUrl, String iconHash) {
         if (profile == null || iconUrl == null || iconUrl.trim().isEmpty()) {
             return;
         }
-        GameIconCache.syncIconAsync(this, iconExecutor, mainHandler, profile.id, iconUrl, bmp -> {
+        GameIconCache.syncIconAsync(this, iconExecutor, mainHandler, profile.id, iconUrl, iconHash, bmp -> {
             if (bmp == null) {
                 return;
             }
@@ -2611,43 +2614,49 @@ public class MainActivity extends Activity {
             return;
         }
         if (!manifest.iconUrl.isEmpty()) {
-            syncDynamicIcon(profile, manifest.iconUrl);
+            syncDynamicIcon(profile, manifest.iconUrl, manifest.iconHash);
         }
         String bannerUrl = manifest.getEffectiveBannerImageUrl();
         if (!bannerUrl.isEmpty()) {
-            GameIconCache.syncBannerAsync(this, iconExecutor, mainHandler, profile.id, bannerUrl, bmp -> {
-                if (bmp == null) {
-                    return;
-                }
-                if (profile.id.equals(activeProfile.id)) {
-                    if (ivHubPoster != null) {
-                        ivHubPoster.setImageBitmap(bmp);
-                    }
-                    if (activeRemoteHeroVideoFile == null) {
-                        usingRemoteBannerImage = true;
-                        pausePromoVideo();
-                        if (promoTextureView != null) {
-                            promoTextureView.setVisibility(View.GONE);
+            GameIconCache.syncBannerAsync(
+                    this, iconExecutor, mainHandler,
+                    profile.id, bannerUrl, manifest.getEffectiveBannerImageHash(),
+                    bmp -> {
+                        if (bmp == null) {
+                            return;
                         }
-                    }
-                }
-                refreshHomeCards();
-            });
+                        if (profile.id.equals(activeProfile.id)) {
+                            if (ivHubPoster != null) {
+                                ivHubPoster.setImageBitmap(bmp);
+                            }
+                            if (activeRemoteHeroVideoFile == null) {
+                                usingRemoteBannerImage = true;
+                                pausePromoVideo();
+                                if (promoTextureView != null) {
+                                    promoTextureView.setVisibility(View.GONE);
+                                }
+                            }
+                        }
+                        refreshHomeCards();
+                    });
         }
         String videoUrl = manifest.getEffectiveHeroVideoUrl();
         if (!videoUrl.isEmpty()) {
-            GameIconCache.syncHeroVideoAsync(this, iconExecutor, mainHandler, profile.id, videoUrl, file -> {
-                if (file != null && profile.id.equals(activeProfile.id)) {
-                    activeRemoteHeroVideoFile = file;
-                    usingRemoteBannerImage = false;
-                    if (isOnGameHub && promoTextureView != null) {
-                        promoTextureView.setVisibility(View.VISIBLE);
-                        if (promoTextureView.isAvailable()) {
-                            startPromoVideoOnSurface(promoTextureView.getSurfaceTexture());
+            GameIconCache.syncHeroVideoAsync(
+                    this, iconExecutor, mainHandler,
+                    profile.id, videoUrl, manifest.getEffectiveHeroVideoHash(),
+                    file -> {
+                        if (file != null && profile.id.equals(activeProfile.id)) {
+                            activeRemoteHeroVideoFile = file;
+                            usingRemoteBannerImage = false;
+                            if (isOnGameHub && promoTextureView != null) {
+                                promoTextureView.setVisibility(View.VISIBLE);
+                                if (promoTextureView.isAvailable()) {
+                                    startPromoVideoOnSurface(promoTextureView.getSurfaceTexture());
+                                }
+                            }
                         }
-                    }
-                }
-            });
+                    });
         }
     }
 
@@ -3956,9 +3965,7 @@ public class MainActivity extends Activity {
                 stageDir.mkdirs();
 
                 PatchManifest betaManifest = PatchDownloader.fetchBetaManifest(activeProfile);
-                if (!betaManifest.iconUrl.isEmpty()) {
-                    syncDynamicIcon(activeProfile, betaManifest.iconUrl);
-                }
+                syncDynamicMediaForManifest(activeProfile, betaManifest);
                 updateProgress(12, "🧪 تم العثور على نسخة الاختبار (" + betaManifest.patchVersion + ") — جارٍ التحميل...");
 
                 PatchDownloader.downloadToFile(

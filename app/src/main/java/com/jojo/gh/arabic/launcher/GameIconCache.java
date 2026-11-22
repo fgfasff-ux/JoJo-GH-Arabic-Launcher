@@ -18,9 +18,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
 /**
- * مدير التخزين المؤقت والمزامنة الفورية للوسائط عن بُعد (Disk + Memory Cache):
- * يدعم الأيقونات الديناميكية (icon_url)، صور البانر العلوية (banner_url)،
- * ومقاطع الفيديو الترويجية (hero_media_url) مع تجاوز الكاش عند تغيّر الرابط والعمل كاحتياطي محلي.
+ * مدير التخزين الذكي بالبصمة (Smart Hash-Based Caching — Disk + Memory Cache):
+ * يقارن البصمات الرقمية (icon_hash, banner_hash, hero_media_hash) القادمة من manifest.json
+ * بالبصمات المحفوظة محلياً في SharedPreferences:
+ * - إذا لم تتغير البصمة وكان الملف مخزناً محلياً: يُعاد فوراً دون أي اتصال بالإنترنت.
+ * - إذا تغيّرت البصمة (أو لم يكن مخزناً): يُحمّل الملف المحدّث فقط وتُحدَّث البصمة والكاش المحلي.
  */
 public final class GameIconCache {
 
@@ -63,16 +65,43 @@ public final class GameIconCache {
         return new File(dir, safeKey + ext);
     }
 
+    private static String buildCacheToken(String expectedHash, String cleanUrl) {
+        if (expectedHash != null && !expectedHash.trim().isEmpty()) {
+            return "hash:" + expectedHash.trim().toLowerCase(Locale.US);
+        }
+        return "url:" + cleanUrl;
+    }
+
+    private static boolean isCacheFresh(SharedPreferences prefs, String cacheKey, String expectedToken, String cleanUrl, File outFile, long minBytes) {
+        if (!outFile.isFile() || outFile.length() < minBytes) {
+            return false;
+        }
+        String savedToken = prefs.getString("token_" + cacheKey, "");
+        if (!savedToken.isEmpty()) {
+            return expectedToken.equals(savedToken);
+        }
+        // توافق تلقائي مع النسخ الأقدم التي كانت تحفظ url_ فقط
+        String legacyUrl = prefs.getString("url_" + cacheKey, "");
+        return !legacyUrl.isEmpty() && legacyUrl.equals(cleanUrl) && expectedToken.startsWith("url:");
+    }
+
+    private static void saveCacheToken(SharedPreferences prefs, String cacheKey, String token, String cleanUrl) {
+        prefs.edit()
+                .putString("token_" + cacheKey, token)
+                .putString("url_" + cacheKey, cleanUrl)
+                .apply();
+    }
+
     // -------------------------------------------------------------------------
-    // 1) أيقونة اللعبة (icon_url)
+    // 1) أيقونة اللعبة (icon_url + icon_hash)
     // -------------------------------------------------------------------------
 
     public static Bitmap loadCachedBitmap(Context context, String gameId) {
         return loadCachedImageByKey(context, "icon_" + gameId, ".png");
     }
 
-    public static Bitmap syncIconSync(Context context, String gameId, String iconUrl) {
-        return syncImageSync(context, "icon_" + gameId, ".png", iconUrl, MAX_ICON_BYTES);
+    public static Bitmap syncIconSync(Context context, String gameId, String iconUrl, String iconHash) {
+        return syncImageSync(context, "icon_" + gameId, ".png", iconUrl, iconHash, MAX_ICON_BYTES);
     }
 
     public static void syncIconAsync(
@@ -81,21 +110,22 @@ public final class GameIconCache {
             Handler mainHandler,
             String gameId,
             String iconUrl,
+            String iconHash,
             Callback callback
     ) {
-        syncImageAsync(context, executor, mainHandler, "icon_" + gameId, ".png", iconUrl, MAX_ICON_BYTES, callback);
+        syncImageAsync(context, executor, mainHandler, "icon_" + gameId, ".png", iconUrl, iconHash, MAX_ICON_BYTES, callback);
     }
 
     // -------------------------------------------------------------------------
-    // 2) صورة البانر الخلفية العلوية (banner_url)
+    // 2) صورة البانر الخلفية العلوية (banner_url + banner_hash)
     // -------------------------------------------------------------------------
 
     public static Bitmap loadCachedBannerBitmap(Context context, String gameId) {
         return loadCachedImageByKey(context, "banner_" + gameId, ".jpg");
     }
 
-    public static Bitmap syncBannerSync(Context context, String gameId, String bannerUrl) {
-        return syncImageSync(context, "banner_" + gameId, ".jpg", bannerUrl, MAX_BANNER_BYTES);
+    public static Bitmap syncBannerSync(Context context, String gameId, String bannerUrl, String bannerHash) {
+        return syncImageSync(context, "banner_" + gameId, ".jpg", bannerUrl, bannerHash, MAX_BANNER_BYTES);
     }
 
     public static void syncBannerAsync(
@@ -104,13 +134,14 @@ public final class GameIconCache {
             Handler mainHandler,
             String gameId,
             String bannerUrl,
+            String bannerHash,
             Callback callback
     ) {
-        syncImageAsync(context, executor, mainHandler, "banner_" + gameId, ".jpg", bannerUrl, MAX_BANNER_BYTES, callback);
+        syncImageAsync(context, executor, mainHandler, "banner_" + gameId, ".jpg", bannerUrl, bannerHash, MAX_BANNER_BYTES, callback);
     }
 
     // -------------------------------------------------------------------------
-    // 3) مقطع الفيديو الترويجي المحدّث عن بُعد (hero_media_url -> .mp4/.webm)
+    // 3) مقطع الفيديو الترويجي المحدّث عن بُعد (hero_media_url + hero_media_hash)
     // -------------------------------------------------------------------------
 
     public static File loadCachedHeroVideoFile(Context context, String gameId) {
@@ -127,6 +158,7 @@ public final class GameIconCache {
             Handler mainHandler,
             String gameId,
             String videoUrl,
+            String videoHash,
             FileCallback callback
     ) {
         if (context == null || gameId == null || !isVideoMediaUrl(videoUrl)) {
@@ -137,14 +169,15 @@ public final class GameIconCache {
             return;
         }
         final Context appCtx = context.getApplicationContext();
+        final String expectedToken = buildCacheToken(videoHash, cleanUrl);
         executor.execute(() -> {
             try {
                 String key = "hero_video_" + gameId;
                 SharedPreferences prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                String cachedUrl = prefs.getString("url_" + key, "");
                 File outFile = getCacheFile(appCtx, key, ".mp4");
 
-                if (cleanUrl.equals(cachedUrl) && outFile.isFile() && outFile.length() > 1024) {
+                // إذا لم تتغير البصمة، استخدم الفيديو المحلي المخزّن فوراً بدون أي تحميل!
+                if (isCacheFresh(prefs, key, expectedToken, cleanUrl, outFile, 1024)) {
                     if (callback != null && mainHandler != null) {
                         mainHandler.post(() -> callback.onFileReady(outFile));
                     }
@@ -170,7 +203,7 @@ public final class GameIconCache {
                     }
                     tmp.delete();
                 }
-                prefs.edit().putString("url_" + key, cleanUrl).apply();
+                saveCacheToken(prefs, key, expectedToken, cleanUrl);
                 if (callback != null && mainHandler != null) {
                     mainHandler.post(() -> callback.onFileReady(outFile));
                 }
@@ -180,7 +213,7 @@ public final class GameIconCache {
     }
 
     // -------------------------------------------------------------------------
-    // نواة التخزين والتحميل المشتركة للصور
+    // نواة التخزين الذكي بالبصمة للصور
     // -------------------------------------------------------------------------
 
     private static Bitmap loadCachedImageByKey(Context context, String cacheKey, String ext) {
@@ -213,6 +246,7 @@ public final class GameIconCache {
             String cacheKey,
             String ext,
             String imageUrl,
+            String expectedHash,
             int maxBytes,
             Callback callback
     ) {
@@ -221,7 +255,7 @@ public final class GameIconCache {
         }
         final Context appCtx = context.getApplicationContext();
         executor.execute(() -> {
-            Bitmap bmp = syncImageSync(appCtx, cacheKey, ext, imageUrl, maxBytes);
+            Bitmap bmp = syncImageSync(appCtx, cacheKey, ext, imageUrl, expectedHash, maxBytes);
             if (bmp != null && callback != null && mainHandler != null) {
                 mainHandler.post(() -> callback.onIconReady(bmp));
             }
@@ -233,6 +267,7 @@ public final class GameIconCache {
             String cacheKey,
             String ext,
             String imageUrl,
+            String expectedHash,
             int maxBytes
     ) {
         if (context == null || cacheKey == null || imageUrl == null) {
@@ -245,10 +280,11 @@ public final class GameIconCache {
         Context appCtx = context.getApplicationContext();
         try {
             SharedPreferences prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String cachedUrl = prefs.getString("url_" + cacheKey, "");
             File outFile = getCacheFile(appCtx, cacheKey, ext);
+            String expectedToken = buildCacheToken(expectedHash, cleanUrl);
 
-            if (cleanUrl.equals(cachedUrl) && outFile.isFile() && outFile.length() > 0) {
+            // فحص البصمة أولاً: إذا تطابقت مع الكاش المحلي، استخدم الملف المحلي فوراً بدون تحميل!
+            if (isCacheFresh(prefs, cacheKey, expectedToken, cleanUrl, outFile, 16)) {
                 return loadCachedImageByKey(appCtx, cacheKey, ext);
             }
 
@@ -283,7 +319,7 @@ public final class GameIconCache {
                 tmpFile.delete();
             }
 
-            prefs.edit().putString("url_" + cacheKey, cleanUrl).apply();
+            saveCacheToken(prefs, cacheKey, expectedToken, cleanUrl);
             MEMORY_CACHE.put(cacheKey, decoded);
             return decoded;
         } catch (Throwable ignored) {

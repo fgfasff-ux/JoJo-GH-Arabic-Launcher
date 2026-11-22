@@ -34,10 +34,13 @@ public final class PatchManifest {
     public final String targetSubpath;
     public final String channel;
 
-    // المزامنة الديناميكية للوسائط والبيانات وحارس الأمان عن بُعد
+    // المزامنة الديناميكية للوسائط والبيانات وحارس الأمان عن بُعد (مع بصمات التخزين الذكي)
     public final String iconUrl;
+    public final String iconHash;
     public final String bannerUrl;
+    public final String bannerHash;
     public final String heroMediaUrl;
+    public final String heroMediaHash;
     public final String storeTitle;
     public final String storeSummary;
     public final String storeDeveloper;
@@ -74,7 +77,7 @@ public final class PatchManifest {
                 expectedForceConfSize,
                 releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
                 "public",
-                "", "", "", "", "", "", "", "", "", 0, 0, "",
+                "", "", "", "", "", "", "", "", "", "", "", "", 0, 0, "",
                 true, false, "", "", ""
         );
     }
@@ -101,7 +104,7 @@ public final class PatchManifest {
                 expectedForceConfSize,
                 releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
                 channel,
-                "", "", "", "", "", "", "", "", "", 0, 0, "",
+                "", "", "", "", "", "", "", "", "", "", "", "", 0, 0, "",
                 true, false, "", "", ""
         );
     }
@@ -126,8 +129,11 @@ public final class PatchManifest {
             String targetSubpath,
             String channel,
             String iconUrl,
+            String iconHash,
             String bannerUrl,
+            String bannerHash,
             String heroMediaUrl,
+            String heroMediaHash,
             String storeTitle,
             String storeSummary,
             String storeDeveloper,
@@ -168,8 +174,11 @@ public final class PatchManifest {
         this.targetSubpath = LauncherConfig.normalizeSubpath(targetSubpath);
         this.channel = (channel != null && !channel.trim().isEmpty()) ? channel.trim().toLowerCase() : "public";
         this.iconUrl = iconUrl != null ? iconUrl.trim() : "";
+        this.iconHash = iconHash != null ? iconHash.trim().toLowerCase() : "";
         this.bannerUrl = bannerUrl != null ? bannerUrl.trim() : "";
+        this.bannerHash = bannerHash != null ? bannerHash.trim().toLowerCase() : "";
         this.heroMediaUrl = heroMediaUrl != null ? heroMediaUrl.trim() : "";
+        this.heroMediaHash = heroMediaHash != null ? heroMediaHash.trim().toLowerCase() : "";
         this.storeTitle = storeTitle != null ? storeTitle.trim() : "";
         this.storeSummary = storeSummary != null ? storeSummary.trim() : "";
         this.storeDeveloper = storeDeveloper != null ? storeDeveloper.trim() : "";
@@ -196,7 +205,7 @@ public final class PatchManifest {
                 expectedLangOrigMd5, expectedLangOrigSize,
                 expectedPatchedLangMd5, expectedPatchedLangSha256, expectedPatchedLangSize,
                 expectedForceConfSize, releaseDate, changelog, downloadUrl, sha256, sizeBytes,
-                targetSubpath, newChannel, iconUrl, bannerUrl, heroMediaUrl,
+                targetSubpath, newChannel, iconUrl, iconHash, bannerUrl, bannerHash, heroMediaUrl, heroMediaHash,
                 storeTitle, storeSummary, storeDeveloper, storeScore, storeInstalls, storeContentRating,
                 statsTranslatedStrings, statsTotalRows, statsEngine,
                 securitySafe, securityMaintenance, securityMessage, feedbackWebhookUrl, rawJson
@@ -213,9 +222,26 @@ public final class PatchManifest {
         return "";
     }
 
+    public String getEffectiveBannerImageHash() {
+        if (!bannerUrl.isEmpty()) {
+            return bannerHash;
+        }
+        if (!heroMediaUrl.isEmpty() && !GameIconCache.isVideoMediaUrl(heroMediaUrl)) {
+            return heroMediaHash;
+        }
+        return "";
+    }
+
     public String getEffectiveHeroVideoUrl() {
         if (!heroMediaUrl.isEmpty() && GameIconCache.isVideoMediaUrl(heroMediaUrl)) {
             return heroMediaUrl;
+        }
+        return "";
+    }
+
+    public String getEffectiveHeroVideoHash() {
+        if (!heroMediaUrl.isEmpty() && GameIconCache.isVideoMediaUrl(heroMediaUrl)) {
+            return heroMediaHash;
         }
         return "";
     }
@@ -291,8 +317,11 @@ public final class PatchManifest {
                 obj.optString("target_subpath", ""),
                 obj.optString("channel", "public"),
                 obj.optString("icon_url", ""),
+                obj.optString("icon_hash", ""),
                 obj.optString("banner_url", ""),
+                obj.optString("banner_hash", ""),
                 obj.optString("hero_media_url", ""),
+                obj.optString("hero_media_hash", ""),
                 storeTitle,
                 storeSummary,
                 storeDeveloper,
