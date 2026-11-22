@@ -7,14 +7,18 @@ import org.json.JSONObject;
 
 /**
  * نموذج بيانات يمثّل ملف manifest.json أو manifest_beta.json المستضاف على GitHub Releases،
- * شامل حقول التوافق لحارس الأمان + رابط الأيقونة الديناميكية + بيانات المتجر + إحصائيات الحزمة.
+ * شامل حقول حارس الأمان + التحكم الديناميكي الكامل عن بُعد (Remote Live Config):
+ * icon_url, banner_url, hero_media_url, store_info, latest_game_version, latest_patch_version,
+ * changelog, patch_stats, security_guard, و feedback_webhook_url.
  */
 public final class PatchManifest {
 
     private static final String CACHE_PREFS = "rdav_manifest_cache";
 
     public final String patchVersion;
+    public final String latestPatchVersion;
     public final String gameVersion;
+    public final String latestGameVersion;
     public final long targetGameVersionCode;
     public final String expectedLangOrigMd5;
     public final long expectedLangOrigSize;
@@ -30,8 +34,10 @@ public final class PatchManifest {
     public final String targetSubpath;
     public final String channel;
 
-    // المزامنة الديناميكية من أداة الـ PC
+    // المزامنة الديناميكية للوسائط والبيانات وحارس الأمان عن بُعد
     public final String iconUrl;
+    public final String bannerUrl;
+    public final String heroMediaUrl;
     public final String storeTitle;
     public final String storeSummary;
     public final String storeDeveloper;
@@ -41,6 +47,9 @@ public final class PatchManifest {
     public final int statsTranslatedStrings;
     public final int statsTotalRows;
     public final String statsEngine;
+    public final boolean securitySafe;
+    public final boolean securityMaintenance;
+    public final String securityMessage;
     public final String feedbackWebhookUrl;
     public final String rawJson;
 
@@ -59,13 +68,14 @@ public final class PatchManifest {
             String targetSubpath
     ) {
         this(
-                patchVersion, gameVersion, targetGameVersionCode,
+                patchVersion, patchVersion, gameVersion, gameVersion, targetGameVersionCode,
                 expectedLangOrigMd5, expectedLangOrigSize,
                 "", "", 0L,
                 expectedForceConfSize,
                 releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
                 "public",
-                "", "", "", "", "", "", "", 0, 0, "", "", ""
+                "", "", "", "", "", "", "", "", "", 0, 0, "",
+                true, false, "", "", ""
         );
     }
 
@@ -85,19 +95,22 @@ public final class PatchManifest {
             String channel
     ) {
         this(
-                patchVersion, gameVersion, targetGameVersionCode,
+                patchVersion, patchVersion, gameVersion, gameVersion, targetGameVersionCode,
                 expectedLangOrigMd5, expectedLangOrigSize,
                 "", "", 0L,
                 expectedForceConfSize,
                 releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
                 channel,
-                "", "", "", "", "", "", "", 0, 0, "", "", ""
+                "", "", "", "", "", "", "", "", "", 0, 0, "",
+                true, false, "", "", ""
         );
     }
 
     public PatchManifest(
             String patchVersion,
+            String latestPatchVersion,
             String gameVersion,
+            String latestGameVersion,
             long targetGameVersionCode,
             String expectedLangOrigMd5,
             long expectedLangOrigSize,
@@ -113,6 +126,8 @@ public final class PatchManifest {
             String targetSubpath,
             String channel,
             String iconUrl,
+            String bannerUrl,
+            String heroMediaUrl,
             String storeTitle,
             String storeSummary,
             String storeDeveloper,
@@ -122,11 +137,20 @@ public final class PatchManifest {
             int statsTranslatedStrings,
             int statsTotalRows,
             String statsEngine,
+            boolean securitySafe,
+            boolean securityMaintenance,
+            String securityMessage,
             String feedbackWebhookUrl,
             String rawJson
     ) {
         this.patchVersion = patchVersion != null ? patchVersion.trim() : "1.0.0";
+        this.latestPatchVersion = (latestPatchVersion != null && !latestPatchVersion.trim().isEmpty())
+                ? latestPatchVersion.trim()
+                : this.patchVersion;
         this.gameVersion = gameVersion != null ? gameVersion.trim() : LauncherConfig.TARGET_GAME_VERSION_NAME;
+        this.latestGameVersion = (latestGameVersion != null && !latestGameVersion.trim().isEmpty())
+                ? latestGameVersion.trim()
+                : this.gameVersion;
         this.targetGameVersionCode = targetGameVersionCode > 0 ? targetGameVersionCode : LauncherConfig.TARGET_GAME_VERSION_CODE;
         this.expectedLangOrigMd5 = (expectedLangOrigMd5 != null && !expectedLangOrigMd5.trim().isEmpty())
                 ? expectedLangOrigMd5.trim().toUpperCase()
@@ -144,6 +168,8 @@ public final class PatchManifest {
         this.targetSubpath = LauncherConfig.normalizeSubpath(targetSubpath);
         this.channel = (channel != null && !channel.trim().isEmpty()) ? channel.trim().toLowerCase() : "public";
         this.iconUrl = iconUrl != null ? iconUrl.trim() : "";
+        this.bannerUrl = bannerUrl != null ? bannerUrl.trim() : "";
+        this.heroMediaUrl = heroMediaUrl != null ? heroMediaUrl.trim() : "";
         this.storeTitle = storeTitle != null ? storeTitle.trim() : "";
         this.storeSummary = storeSummary != null ? storeSummary.trim() : "";
         this.storeDeveloper = storeDeveloper != null ? storeDeveloper.trim() : "";
@@ -153,12 +179,45 @@ public final class PatchManifest {
         this.statsTranslatedStrings = Math.max(0, statsTranslatedStrings);
         this.statsTotalRows = Math.max(0, statsTotalRows);
         this.statsEngine = statsEngine != null ? statsEngine.trim() : "";
+        this.securitySafe = securitySafe;
+        this.securityMaintenance = securityMaintenance;
+        this.securityMessage = securityMessage != null ? securityMessage.trim() : "";
         this.feedbackWebhookUrl = feedbackWebhookUrl != null ? feedbackWebhookUrl.trim() : "";
         this.rawJson = rawJson != null ? rawJson : "";
     }
 
     public boolean isBetaChannel() {
         return "beta".equalsIgnoreCase(channel);
+    }
+
+    public PatchManifest withChannel(String newChannel) {
+        return new PatchManifest(
+                patchVersion, latestPatchVersion, gameVersion, latestGameVersion, targetGameVersionCode,
+                expectedLangOrigMd5, expectedLangOrigSize,
+                expectedPatchedLangMd5, expectedPatchedLangSha256, expectedPatchedLangSize,
+                expectedForceConfSize, releaseDate, changelog, downloadUrl, sha256, sizeBytes,
+                targetSubpath, newChannel, iconUrl, bannerUrl, heroMediaUrl,
+                storeTitle, storeSummary, storeDeveloper, storeScore, storeInstalls, storeContentRating,
+                statsTranslatedStrings, statsTotalRows, statsEngine,
+                securitySafe, securityMaintenance, securityMessage, feedbackWebhookUrl, rawJson
+        );
+    }
+
+    public String getEffectiveBannerImageUrl() {
+        if (!bannerUrl.isEmpty()) {
+            return bannerUrl;
+        }
+        if (!heroMediaUrl.isEmpty() && !GameIconCache.isVideoMediaUrl(heroMediaUrl)) {
+            return heroMediaUrl;
+        }
+        return "";
+    }
+
+    public String getEffectiveHeroVideoUrl() {
+        if (!heroMediaUrl.isEmpty() && GameIconCache.isVideoMediaUrl(heroMediaUrl)) {
+            return heroMediaUrl;
+        }
+        return "";
     }
 
     public static PatchManifest fromJson(String jsonText) throws Exception {
@@ -170,6 +229,12 @@ public final class PatchManifest {
 
         JSONObject storeObj = obj.optJSONObject("store_info");
         JSONObject statsObj = obj.optJSONObject("patch_stats");
+        JSONObject sgObj = obj.optJSONObject("security_guard");
+
+        String patchVer = obj.optString("patch_version", "1.0.0");
+        String latestPatchVer = obj.optString("latest_patch_version", patchVer);
+        String gameVer = obj.optString("game_version", LauncherConfig.TARGET_GAME_VERSION_NAME);
+        String latestGameVer = obj.optString("latest_game_version", gameVer);
 
         String patchedMd5 = obj.optString("expected_patched_lang_md5", "");
         if (patchedMd5.trim().isEmpty() && statsObj != null) {
@@ -194,6 +259,10 @@ public final class PatchManifest {
         int statsTotal = statsObj != null ? statsObj.optInt("total_rows", 0) : 0;
         String statsEngine = statsObj != null ? statsObj.optString("engine", "") : "";
 
+        boolean secSafe = sgObj == null || sgObj.optBoolean("safe", true);
+        boolean secMaint = sgObj != null && sgObj.optBoolean("maintenance", false);
+        String secMsg = sgObj != null ? sgObj.optString("message", "") : "";
+
         String feedbackWebhook = obj.optString("feedback_webhook_url", "").trim();
         if (feedbackWebhook.isEmpty()) {
             JSONObject fbObj = obj.optJSONObject("feedback");
@@ -203,8 +272,10 @@ public final class PatchManifest {
         }
 
         return new PatchManifest(
-                obj.optString("patch_version", "1.0.0"),
-                obj.optString("game_version", LauncherConfig.TARGET_GAME_VERSION_NAME),
+                patchVer,
+                latestPatchVer,
+                gameVer,
+                latestGameVer,
                 obj.optLong("target_game_version_code", LauncherConfig.TARGET_GAME_VERSION_CODE),
                 obj.optString("expected_lang_orig_md5", LauncherConfig.TARGET_LANG_ORIG_MD5),
                 obj.optLong("expected_lang_orig_size", LauncherConfig.TARGET_LANG_ORIG_SIZE),
@@ -220,6 +291,8 @@ public final class PatchManifest {
                 obj.optString("target_subpath", ""),
                 obj.optString("channel", "public"),
                 obj.optString("icon_url", ""),
+                obj.optString("banner_url", ""),
+                obj.optString("hero_media_url", ""),
                 storeTitle,
                 storeSummary,
                 storeDeveloper,
@@ -229,6 +302,9 @@ public final class PatchManifest {
                 statsTranslated,
                 statsTotal,
                 statsEngine,
+                secSafe,
+                secMaint,
+                secMsg,
                 feedbackWebhook,
                 jsonText
         );

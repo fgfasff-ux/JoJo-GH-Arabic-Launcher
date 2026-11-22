@@ -37,6 +37,10 @@ public final class PatchDownloader {
     }
 
     private static HttpURLConnection openHttpsConnection(String urlStr) throws IOException {
+        return openHttpsConnection(urlStr, false);
+    }
+
+    private static HttpURLConnection openHttpsConnection(String urlStr, boolean noCache) throws IOException {
         String current = urlStr;
         for (int redirect = 0; redirect <= LauncherConfig.HTTP_MAX_REDIRECTS; redirect++) {
             URL url = new URL(current);
@@ -47,8 +51,14 @@ public final class PatchDownloader {
             conn.setInstanceFollowRedirects(false);
             conn.setConnectTimeout(LauncherConfig.HTTP_CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(LauncherConfig.HTTP_READ_TIMEOUT_MS);
-            conn.setRequestProperty("User-Agent", "JoJo-GH-Arabic-Launcher/" + LauncherConfig.APP_VERSION);
+            conn.setRequestProperty("User-Agent", "RDAV-MultiGame-Hub/" + LauncherConfig.APP_VERSION);
             conn.setRequestProperty("Accept", "*/*");
+            if (noCache) {
+                conn.setUseCaches(false);
+                conn.setRequestProperty("Cache-Control", "no-cache, no-store, must-revalidate");
+                conn.setRequestProperty("Pragma", "no-cache");
+                conn.setRequestProperty("Expires", "0");
+            }
             conn.connect();
 
             int code = conn.getResponseCode();
@@ -74,10 +84,24 @@ public final class PatchDownloader {
         throw new IOException("تجاوز الحد الأقصى لإعادة التوجيه للرابط");
     }
 
+    private static String appendCacheBuster(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            return "";
+        }
+        String u = url.trim();
+        char sep = u.contains("?") ? '&' : '?';
+        return u + sep + "t=" + System.currentTimeMillis();
+    }
+
     private static String downloadUtf8Text(String urlStr, int maxBytes) throws IOException {
+        return downloadUtf8Text(urlStr, maxBytes, true);
+    }
+
+    private static String downloadUtf8Text(String urlStr, int maxBytes, boolean noCache) throws IOException {
         HttpURLConnection conn = null;
         try {
-            conn = openHttpsConnection(urlStr);
+            String targetUrl = noCache ? appendCacheBuster(urlStr) : urlStr;
+            conn = openHttpsConnection(targetUrl, noCache);
             try (InputStream in = new BufferedInputStream(conn.getInputStream());
                  ByteArrayOutputStream out = new ByteArrayOutputStream()) {
                 byte[] buf = new byte[16384];
@@ -152,13 +176,8 @@ public final class PatchDownloader {
         // 1) Direct betaManifestUrl if configured in profile
         if (!profile.betaManifestUrl.isEmpty()) {
             try {
-                PatchManifest m = PatchManifest.fromJson(downloadUtf8Text(profile.betaManifestUrl, 1024 * 1024));
-                return new PatchManifest(
-                        m.patchVersion, m.gameVersion, m.targetGameVersionCode,
-                        m.expectedLangOrigMd5, m.expectedLangOrigSize, m.expectedForceConfSize,
-                        m.releaseDate, m.changelog, m.downloadUrl, m.sha256, m.sizeBytes,
-                        m.targetSubpath, "beta"
-                );
+                PatchManifest m = PatchManifest.fromJson(downloadUtf8Text(profile.betaManifestUrl, 1024 * 1024, true));
+                return m.withChannel("beta");
             } catch (Exception ignored) {
                 // Fall through to live GitHub Pre-release discovery
             }
@@ -203,13 +222,8 @@ public final class PatchDownloader {
             }
 
             if (!betaManifestDownloadUrl.isEmpty()) {
-                PatchManifest m = PatchManifest.fromJson(downloadUtf8Text(betaManifestDownloadUrl, 1024 * 1024));
-                return new PatchManifest(
-                        m.patchVersion, m.gameVersion, m.targetGameVersionCode,
-                        m.expectedLangOrigMd5, m.expectedLangOrigSize, m.expectedForceConfSize,
-                        m.releaseDate, m.changelog, m.downloadUrl, m.sha256, m.sizeBytes,
-                        m.targetSubpath, "beta"
-                );
+                PatchManifest m = PatchManifest.fromJson(downloadUtf8Text(betaManifestDownloadUrl, 1024 * 1024, true));
+                return m.withChannel("beta");
             }
             if (!fallbackBetaZipUrl.isEmpty()) {
                 return new PatchManifest(

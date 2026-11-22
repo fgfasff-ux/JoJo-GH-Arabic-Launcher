@@ -23,6 +23,10 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.media.MediaPlayer;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -211,6 +215,13 @@ public class MainActivity extends Activity {
     private View btnRestore;
     private View btnFeedback;
     private ImageView ivHubLogo;
+    private ImageView ivHubPoster;
+    private LinearLayout hubRemoteSecurityBanner;
+    private TextView tvRemoteSecurityTitle;
+    private TextView tvRemoteSecurityMsg;
+    private volatile File activeRemoteHeroVideoFile = null;
+    private volatile boolean usingRemoteBannerImage = false;
+    private AlertDialog liveSyncDialog;
     private TextView tvStatLinesChip;
     private TextView tvStatCompatChip;
     private TextView tvStoreScorePill;
@@ -384,6 +395,7 @@ public class MainActivity extends Activity {
         mainHandler.removeCallbacks(hidePromoAudioRunnable);
         mainHandler.removeCallbacks(promoFadeRunnable);
         cancelHeroDevBadgeAnimation();
+        dismissLiveSyncLoadingDialog();
         releasePromoVideo();
         try {
             Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener);
@@ -453,14 +465,25 @@ public class MainActivity extends Activity {
 
     private void startPromoVideoOnSurface(SurfaceTexture st) {
         releasePromoVideo();
-        try {
-            AssetFileDescriptor afd = getResources().openRawResourceFd(R.raw.bg_promo);
-            if (afd == null) {
-                return;
+        // إذا كان البانر المحدّث عن بُعد صورة ثابتة (وليس فيديو)، نُبرز الصورة الحية بوضوح فوق البانر
+        if (usingRemoteBannerImage && activeRemoteHeroVideoFile == null) {
+            if (promoTextureView != null) {
+                promoTextureView.setVisibility(View.GONE);
             }
+            return;
+        }
+        try {
             MediaPlayer mp = new MediaPlayer();
-            mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
-            afd.close();
+            if (activeRemoteHeroVideoFile != null && activeRemoteHeroVideoFile.isFile()) {
+                mp.setDataSource(activeRemoteHeroVideoFile.getAbsolutePath());
+            } else {
+                AssetFileDescriptor afd = getResources().openRawResourceFd(R.raw.bg_promo);
+                if (afd == null) {
+                    return;
+                }
+                mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+                afd.close();
+            }
 
             promoSurface = new Surface(st);
             mp.setSurface(promoSurface);
@@ -520,6 +543,9 @@ public class MainActivity extends Activity {
     }
 
     private void resumePromoVideo() {
+        if (usingRemoteBannerImage && activeRemoteHeroVideoFile == null) {
+            return;
+        }
         try {
             if (promoPlayer != null && promoPrepared && !promoPlayer.isPlaying()) {
                 applyPromoVolume();
@@ -979,9 +1005,14 @@ public class MainActivity extends Activity {
         FrameLayout inner = new FrameLayout(this);
         clipRounded(inner, dp(9));
 
-        // 1) الصورة الفنية العريضة تغطي كامل البطاقة
+        // 1) الصورة الفنية العريضة تغطي كامل البطاقة (تتحدّث ديناميكياً من banner_url عند توفره)
         ImageView ivArt = new ImageView(this);
-        ivArt.setImageResource(profile.bannerRes != 0 ? profile.bannerRes : profile.iconRes);
+        Bitmap cachedBanner = !profile.comingSoon ? GameIconCache.loadCachedBannerBitmap(this, profile.id) : null;
+        if (cachedBanner != null) {
+            ivArt.setImageBitmap(cachedBanner);
+        } else {
+            ivArt.setImageResource(profile.bannerRes != 0 ? profile.bannerRes : profile.iconRes);
+        }
         ivArt.setScaleType(ImageView.ScaleType.CENTER_CROP);
         inner.addView(ivArt, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
@@ -1068,7 +1099,7 @@ public class MainActivity extends Activity {
                 b.setPositiveButton("حسناً", null);
                 b.show();
             } else {
-                openGameHub(profile);
+                enterGameWithOnlineSecurityGate(profile);
             }
         });
         return outer;
@@ -1084,6 +1115,235 @@ public class MainActivity extends Activity {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    // =========================================================================
+    // بوابة الفحص الأمني الإلزامية عند الاتصال (Online Security & Live Sync Gate)
+    // =========================================================================
+
+    private boolean isInternetConnected() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) {
+                return false;
+            }
+            Network active = cm.getActiveNetwork();
+            if (active == null) {
+                return false;
+            }
+            NetworkCapabilities caps = cm.getNetworkCapabilities(active);
+            if (caps == null) {
+                return false;
+            }
+            return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    && (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    || caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+                    || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN));
+        } catch (Throwable ignored) {
+            try {
+                ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                NetworkInfo ni = cm != null ? cm.getActiveNetworkInfo() : null;
+                return ni != null && ni.isConnected();
+            } catch (Throwable t) {
+                return false;
+            }
+        }
+    }
+
+    private void enterGameWithOnlineSecurityGate(GameProfile profile) {
+        if (profile == null || profile.comingSoon) {
+            return;
+        }
+        if (!isInternetConnected()) {
+            showInternetRequiredDialog(profile, null);
+            return;
+        }
+        showLiveSyncLoadingDialog(profile);
+        worker.execute(() -> {
+            try {
+                // جلب ملف manifest.json الحي من GitHub مع تجاوز الكاش بالكامل (no-cache)
+                PatchManifest liveManifest = PatchDownloader.fetchManifestForProfile(profile);
+                liveManifest.saveToCache(this, profile.id);
+                latestRemoteManifest = liveManifest;
+
+                // مزامنة الشعار والبانر الحي قبل عرض صفحة اللعبة لضمان ظهور أحدث الوسائط فوراً
+                if (!liveManifest.iconUrl.isEmpty()) {
+                    GameIconCache.syncIconSync(this, profile.id, liveManifest.iconUrl);
+                }
+                String bannerUrl = liveManifest.getEffectiveBannerImageUrl();
+                if (!bannerUrl.isEmpty()) {
+                    GameIconCache.syncBannerSync(this, profile.id, bannerUrl);
+                }
+                String videoUrl = liveManifest.getEffectiveHeroVideoUrl();
+                if (!videoUrl.isEmpty()) {
+                    File cachedVid = GameIconCache.loadCachedHeroVideoFile(this, profile.id);
+                    activeRemoteHeroVideoFile = cachedVid;
+                    GameIconCache.syncHeroVideoAsync(this, iconExecutor, mainHandler, profile.id, videoUrl, file -> {
+                        activeRemoteHeroVideoFile = file;
+                        usingRemoteBannerImage = false;
+                        if (isOnGameHub && promoTextureView != null) {
+                            promoTextureView.setVisibility(View.VISIBLE);
+                            if (promoTextureView.isAvailable()) {
+                                startPromoVideoOnSurface(promoTextureView.getSurfaceTexture());
+                            }
+                        }
+                    });
+                } else {
+                    activeRemoteHeroVideoFile = null;
+                }
+
+                mainHandler.post(() -> {
+                    dismissLiveSyncLoadingDialog();
+                    openGameHub(profile);
+                });
+            } catch (Throwable t) {
+                final String errDetail = readableError(t);
+                mainHandler.post(() -> {
+                    dismissLiveSyncLoadingDialog();
+                    showInternetRequiredDialog(profile, errDetail);
+                });
+            }
+        });
+    }
+
+    private void showLiveSyncLoadingDialog(GameProfile profile) {
+        dismissLiveSyncLoadingDialog();
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setGravity(Gravity.CENTER_HORIZONTAL);
+        container.setPadding(dp(20), dp(22), dp(20), dp(20));
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.parseColor("#0F2330"), LauncherConfig.COL_BG}
+        );
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        container.setBackground(bg);
+
+        ProgressBar spinner = new ProgressBar(this);
+        spinner.setIndeterminate(true);
+        spinner.setIndeterminateTintList(ColorStateList.valueOf(LauncherConfig.COL_GOLD));
+        LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(dp(42), dp(42));
+        spLp.bottomMargin = dp(14);
+        container.addView(spinner, spLp);
+
+        TextView tvTitle = makeText("جاري التحقق من حارس الأمان ومزامنة أحدث البيانات...", 13f, LauncherConfig.COL_GOLD, true);
+        tvTitle.setGravity(Gravity.CENTER);
+        tvTitle.setLineSpacing(dp(3), 1f);
+        container.addView(tvTitle);
+
+        TextView tvSub = makeText(profile.title + " • اتصال حي آمن (no-cache)", 10.5f, LauncherConfig.COL_MUTED, false);
+        tvSub.setGravity(Gravity.CENTER);
+        tvSub.setPadding(0, dp(6), 0, 0);
+        container.addView(tvSub);
+
+        liveSyncDialog = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setView(container)
+                .setCancelable(false)
+                .create();
+        liveSyncDialog.show();
+    }
+
+    private void dismissLiveSyncLoadingDialog() {
+        try {
+            if (liveSyncDialog != null && liveSyncDialog.isShowing()) {
+                liveSyncDialog.dismiss();
+            }
+        } catch (Throwable ignored) {
+        }
+        liveSyncDialog = null;
+    }
+
+    private void showInternetRequiredDialog(GameProfile profile, String techDetail) {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(dp(18), dp(16), dp(18), dp(14));
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.parseColor("#0F2330"), LauncherConfig.COL_BG}
+        );
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        container.setBackground(bg);
+
+        // ترويسة ذهبية-كحلية فخمة
+        LinearLayout hdr = new LinearLayout(this);
+        hdr.setOrientation(LinearLayout.VERTICAL);
+        hdr.setPadding(dp(12), dp(10), dp(12), dp(10));
+        GradientDrawable hdrBg = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.parseColor("#132A38"), LauncherConfig.COL_CARD_INNER}
+        );
+        hdrBg.setCornerRadius(dp(10));
+        hdrBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+        hdr.setBackground(hdrBg);
+
+        hdr.addView(makeText("🔒  الاتصال بالإنترنت مطلوب", 15f, LauncherConfig.COL_GOLD, true));
+        TextView tvSub = makeText("بوابة الفحص الأمني الإلزامية — R.D.AV Security Gate", 10.2f, LauncherConfig.COL_CYAN, true);
+        tvSub.setPadding(0, dp(3), 0, 0);
+        hdr.addView(tvSub);
+
+        LinearLayout.LayoutParams hdrLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        hdrLp.bottomMargin = dp(12);
+        container.addView(hdr, hdrLp);
+
+        TextView tvMsg = makeText(
+                "لضمان أمان ملفات لعبتك، والتحقق من توافق التعريب مع أحدث إصدار للعبة، وتحديث البيانات، يرجى الاتصال بالإنترنت ثم إعادة المحاولة.",
+                12.2f, LauncherConfig.COL_TEXT, false
+        );
+        tvMsg.setLineSpacing(dp(4), 1f);
+        tvMsg.setPadding(dp(2), 0, dp(2), dp(12));
+        container.addView(tvMsg);
+
+        if (techDetail != null && !techDetail.trim().isEmpty()) {
+            TextView tvTech = makeText("تفاصيل الاتصال: " + techDetail, 10f, LauncherConfig.COL_MUTED, false);
+            tvTech.setPadding(dp(10), dp(7), dp(10), dp(7));
+            GradientDrawable tBg = new GradientDrawable();
+            tBg.setColor(LauncherConfig.COL_CARD_INNER);
+            tBg.setCornerRadius(dp(8));
+            tBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+            tvTech.setBackground(tBg);
+            LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            tLp.bottomMargin = dp(12);
+            container.addView(tvTech, tLp);
+        }
+
+        AlertDialog dialog = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setView(container)
+                .create();
+
+        Button btnRetry = new Button(this);
+        btnRetry.setText("🔄  إعادة المحاولة");
+        btnRetry.setAllCaps(false);
+        btnRetry.setTextSize(13.5f);
+        btnRetry.setTextColor(Color.parseColor("#07121A"));
+        btnRetry.setTypeface(fontBold);
+        GradientDrawable rBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{LauncherConfig.COL_GOLD, LauncherConfig.COL_GOLD_SOLID}
+        );
+        rBg.setCornerRadius(dp(10));
+        btnRetry.setBackground(rBg);
+        btnRetry.setOnClickListener(v -> {
+            dialog.dismiss();
+            enterGameWithOnlineSecurityGate(profile);
+        });
+        LinearLayout.LayoutParams rLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(46));
+        rLp.bottomMargin = dp(8);
+        container.addView(btnRetry, rLp);
+
+        Button btnClose = makeButton("إغلاق", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_MUTED, LauncherConfig.COL_BORDER, true);
+        btnClose.setTextSize(12f);
+        btnClose.setOnClickListener(v -> dialog.dismiss());
+        container.addView(btnClose, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40)));
+
+        dialog.show();
     }
 
     private void openGameHub(GameProfile profile) {
@@ -1156,6 +1416,19 @@ public class MainActivity extends Activity {
         hubBetaBanner = makeBetaStatusBanner();
         root.addView(hubBetaBanner, makeCardLp());
 
+        // 0.25) شريط حارس الأمان والتنبيهات الحية عن بُعد (security_guard / latest_version)
+        hubRemoteSecurityBanner = new LinearLayout(this);
+        hubRemoteSecurityBanner.setOrientation(LinearLayout.VERTICAL);
+        hubRemoteSecurityBanner.setPadding(dp(12), dp(10), dp(12), dp(10));
+        hubRemoteSecurityBanner.setVisibility(View.GONE);
+        tvRemoteSecurityTitle = makeText("", 12f, LauncherConfig.COL_GOLD, true);
+        tvRemoteSecurityMsg = makeText("", 10.8f, LauncherConfig.COL_TEXT, false);
+        tvRemoteSecurityMsg.setPadding(0, dp(3), 0, 0);
+        tvRemoteSecurityMsg.setLineSpacing(dp(2), 1f);
+        hubRemoteSecurityBanner.addView(tvRemoteSecurityTitle);
+        hubRemoteSecurityBanner.addView(tvRemoteSecurityMsg);
+        root.addView(hubRemoteSecurityBanner, makeCardLp());
+
         // 0.5) شريط الرجوع إلى مكتبة الألعاب + شارة محرك الحقن النشط
         LinearLayout backRow = new LinearLayout(this);
         backRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -1211,10 +1484,15 @@ public class MainActivity extends Activity {
         FrameLayout promoInner = new FrameLayout(this);
         clipRounded(promoInner, dp(10));
 
-        ImageView ivPoster = new ImageView(this);
-        ivPoster.setImageResource(R.drawable.bg_promo_poster);
-        ivPoster.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        promoInner.addView(ivPoster, new FrameLayout.LayoutParams(
+        ivHubPoster = new ImageView(this);
+        Bitmap initialBanner = GameIconCache.loadCachedBannerBitmap(this, activeProfile.id);
+        if (initialBanner != null) {
+            ivHubPoster.setImageBitmap(initialBanner);
+        } else {
+            ivHubPoster.setImageResource(R.drawable.bg_promo_poster);
+        }
+        ivHubPoster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        promoInner.addView(ivHubPoster, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         promoTextureView = new TextureView(this);
@@ -2328,6 +2606,51 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void syncDynamicMediaForManifest(GameProfile profile, PatchManifest manifest) {
+        if (profile == null || manifest == null) {
+            return;
+        }
+        if (!manifest.iconUrl.isEmpty()) {
+            syncDynamicIcon(profile, manifest.iconUrl);
+        }
+        String bannerUrl = manifest.getEffectiveBannerImageUrl();
+        if (!bannerUrl.isEmpty()) {
+            GameIconCache.syncBannerAsync(this, iconExecutor, mainHandler, profile.id, bannerUrl, bmp -> {
+                if (bmp == null) {
+                    return;
+                }
+                if (profile.id.equals(activeProfile.id)) {
+                    if (ivHubPoster != null) {
+                        ivHubPoster.setImageBitmap(bmp);
+                    }
+                    if (activeRemoteHeroVideoFile == null) {
+                        usingRemoteBannerImage = true;
+                        pausePromoVideo();
+                        if (promoTextureView != null) {
+                            promoTextureView.setVisibility(View.GONE);
+                        }
+                    }
+                }
+                refreshHomeCards();
+            });
+        }
+        String videoUrl = manifest.getEffectiveHeroVideoUrl();
+        if (!videoUrl.isEmpty()) {
+            GameIconCache.syncHeroVideoAsync(this, iconExecutor, mainHandler, profile.id, videoUrl, file -> {
+                if (file != null && profile.id.equals(activeProfile.id)) {
+                    activeRemoteHeroVideoFile = file;
+                    usingRemoteBannerImage = false;
+                    if (isOnGameHub && promoTextureView != null) {
+                        promoTextureView.setVisibility(View.VISIBLE);
+                        if (promoTextureView.isAvailable()) {
+                            startPromoVideoOnSurface(promoTextureView.getSurfaceTexture());
+                        }
+                    }
+                }
+            });
+        }
+    }
+
     private void applyDynamicMetadataToUi() {
         PatchManifest m = latestRemoteManifest;
 
@@ -2338,6 +2661,42 @@ public class MainActivity extends Activity {
                 ivHubLogo.setImageBitmap(cached);
             } else {
                 ivHubLogo.setImageResource(activeProfile.iconRes);
+            }
+        }
+
+        // 1.5) تحديث البانر الخلفي العلوي أو مقطع الفيديو الحي من banner_url / hero_media_url
+        String remoteBannerUrl = m != null ? m.getEffectiveBannerImageUrl() : "";
+        String remoteVideoUrl = m != null ? m.getEffectiveHeroVideoUrl() : "";
+        Bitmap cachedBanner = !remoteBannerUrl.isEmpty()
+                ? GameIconCache.loadCachedBannerBitmap(this, activeProfile.id)
+                : null;
+        if (ivHubPoster != null) {
+            if (cachedBanner != null) {
+                ivHubPoster.setImageBitmap(cachedBanner);
+            } else {
+                ivHubPoster.setImageResource(R.drawable.bg_promo_poster);
+            }
+        }
+        if (!remoteVideoUrl.isEmpty()) {
+            File cachedVid = GameIconCache.loadCachedHeroVideoFile(this, activeProfile.id);
+            activeRemoteHeroVideoFile = cachedVid;
+            usingRemoteBannerImage = false;
+            if (promoTextureView != null) {
+                promoTextureView.setVisibility(View.VISIBLE);
+            }
+        } else if (cachedBanner != null) {
+            // عند رفع صورة بانر مخصصة من أداة الـ PC، نُبرزها فوراً بدون تغطيتها بالفيديو القديم المدمج
+            activeRemoteHeroVideoFile = null;
+            usingRemoteBannerImage = true;
+            pausePromoVideo();
+            if (promoTextureView != null) {
+                promoTextureView.setVisibility(View.GONE);
+            }
+        } else {
+            activeRemoteHeroVideoFile = null;
+            usingRemoteBannerImage = false;
+            if (promoTextureView != null) {
+                promoTextureView.setVisibility(View.VISIBLE);
             }
         }
 
@@ -2378,7 +2737,7 @@ public class MainActivity extends Activity {
 
         // 4) تحديث شريط شارات الإصدار التحريري وقسم «أبرز التحسينات والإصلاحات» المرقّم بمعيّنات ذهبية
         if (tvEditorialVersionBox != null) {
-            String vStr = (m != null && !m.patchVersion.isEmpty()) ? m.patchVersion : "1.0.0";
+            String vStr = (m != null && !m.latestPatchVersion.isEmpty()) ? m.latestPatchVersion : "1.0.0";
             tvEditorialVersionBox.setText(vStr.startsWith("v") ? vStr : ("v" + vStr));
         }
         if (tvEditorialCompatText != null) {
@@ -2386,6 +2745,59 @@ public class MainActivity extends Activity {
             tvEditorialCompatText.setText("متوافق مع الإصدار " + gVer);
         }
         rebuildEditorialChangelogCards(m != null ? m.changelog : "");
+
+        // 5) تحديث شريط حارس الأمان والتنبيهات الحية عن بُعد (security_guard + latest_game_version / latest_patch_version)
+        if (hubRemoteSecurityBanner != null && tvRemoteSecurityTitle != null && tvRemoteSecurityMsg != null) {
+            if (m != null && (!m.securitySafe || m.securityMaintenance)) {
+                GradientDrawable bg = new GradientDrawable(
+                        GradientDrawable.Orientation.LEFT_RIGHT,
+                        new int[]{Color.parseColor("#4C1022"), Color.parseColor("#2B0A14")}
+                );
+                bg.setCornerRadius(dp(10));
+                bg.setStroke(dp(1), LauncherConfig.COL_DANGER);
+                hubRemoteSecurityBanner.setBackground(bg);
+                tvRemoteSecurityTitle.setText(m.securityMaintenance
+                        ? "🛠  صيانة / تحديث حزمة التعريب قيد التجهيز"
+                        : "🛡  تنبيه حارس الأمان عن بُعد");
+                tvRemoteSecurityTitle.setTextColor(Color.parseColor("#FDA4AF"));
+                tvRemoteSecurityMsg.setText(!m.securityMessage.isEmpty()
+                        ? m.securityMessage
+                        : LauncherConfig.SAFETY_GUARD_ALERT_MESSAGE);
+                hubRemoteSecurityBanner.setVisibility(View.VISIBLE);
+            } else if (m != null && isPatchCurrentlyInstalled
+                    && !installedPatchVersion.isEmpty()
+                    && !installedPatchVersion.equals(m.latestPatchVersion)
+                    && !installedPatchVersion.startsWith("beta-")) {
+                GradientDrawable bg = new GradientDrawable(
+                        GradientDrawable.Orientation.LEFT_RIGHT,
+                        new int[]{Color.parseColor("#2E230B"), Color.parseColor("#181409")}
+                );
+                bg.setCornerRadius(dp(10));
+                bg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+                hubRemoteSecurityBanner.setBackground(bg);
+                tvRemoteSecurityTitle.setText("✨  يتوفر إصدار تعريب جديد (v" + m.latestPatchVersion + ")");
+                tvRemoteSecurityTitle.setTextColor(LauncherConfig.COL_GOLD);
+                tvRemoteSecurityMsg.setText("الإصدار المثبّت حالياً: " + installedPatchVersion
+                        + " • اضغط «تحديث أونلاين (GitHub)» للحصول على أحدث تعريب فوراً.");
+                hubRemoteSecurityBanner.setVisibility(View.VISIBLE);
+            } else if (m != null && !m.latestGameVersion.isEmpty()
+                    && !m.latestGameVersion.equals(m.gameVersion)) {
+                GradientDrawable bg = new GradientDrawable(
+                        GradientDrawable.Orientation.LEFT_RIGHT,
+                        new int[]{Color.parseColor("#2E230B"), Color.parseColor("#181409")}
+                );
+                bg.setCornerRadius(dp(10));
+                bg.setStroke(dp(1), LauncherConfig.COL_WARN);
+                hubRemoteSecurityBanner.setBackground(bg);
+                tvRemoteSecurityTitle.setText("⚠  صدر تحديث جديد للعبة في المتجر (v" + m.latestGameVersion + ")");
+                tvRemoteSecurityTitle.setTextColor(LauncherConfig.COL_GOLD);
+                tvRemoteSecurityMsg.setText("التعريب الحالي متوافق مع v" + m.gameVersion
+                        + " — يرجى انتظار تحديث حزمة التعريب قبل تحديث اللعبة من المتجر.");
+                hubRemoteSecurityBanner.setVisibility(View.VISIBLE);
+            } else {
+                hubRemoteSecurityBanner.setVisibility(View.GONE);
+            }
+        }
     }
 
     /**
@@ -3330,9 +3742,7 @@ public class MainActivity extends Activity {
                 PatchManifest manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
                 manifest.saveToCache(this, activeProfile.id);
                 latestRemoteManifest = manifest;
-                if (!manifest.iconUrl.isEmpty()) {
-                    syncDynamicIcon(activeProfile, manifest.iconUrl);
-                }
+                syncDynamicMediaForManifest(activeProfile, manifest);
                 mainHandler.post(this::updateRemoteCardUi);
             } catch (Throwable t) {
                 if (userTriggered) {
@@ -3407,9 +3817,7 @@ public class MainActivity extends Activity {
                 PatchManifest manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
                 manifest.saveToCache(this, activeProfile.id);
                 latestRemoteManifest = manifest;
-                if (!manifest.iconUrl.isEmpty()) {
-                    syncDynamicIcon(activeProfile, manifest.iconUrl);
-                }
+                syncDynamicMediaForManifest(activeProfile, manifest);
                 mainHandler.post(this::updateRemoteCardUi);
 
                 updateProgress(7, "جارٍ التحقق عبر حارس الأمان (Version Safety Guard)...");
