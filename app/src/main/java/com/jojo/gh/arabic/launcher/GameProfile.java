@@ -1,5 +1,9 @@
 package com.jojo.gh.arabic.launcher;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 /**
  * نموذج تعريف اللعبة المستقل (GameProfile) داخل منصة R.D.AV Multi-Game Localization Hub.
  */
@@ -32,6 +36,8 @@ public final class GameProfile {
     public final String defaultStoreInstalls;
     public final String defaultStoreSummary;
     public final int defaultTranslatedStrings;
+    public final List<String> defaultScreenshotsUrls;
+    public final String defaultScreenshotsHash;
 
     public GameProfile(
             String id,
@@ -62,6 +68,47 @@ public final class GameProfile {
             String defaultStoreSummary,
             int defaultTranslatedStrings
     ) {
+        this(
+                id, title, arabicTitle, subtitle, packageName, accentColor, secondaryColor,
+                iconRes, bannerRes, promoVideoRes, githubRepo, manifestUrl, betaManifestUrl,
+                patchStrategy, targetGameVersionName, targetGameVersionCode, patchVersionLabel,
+                comingSoon, statLines, statScope, statCompat, statSafety,
+                defaultStoreDeveloper, defaultStoreScore, defaultStoreInstalls, defaultStoreSummary,
+                defaultTranslatedStrings, Collections.emptyList(), ""
+        );
+    }
+
+    public GameProfile(
+            String id,
+            String title,
+            String arabicTitle,
+            String subtitle,
+            String packageName,
+            int accentColor,
+            int secondaryColor,
+            int iconRes,
+            int bannerRes,
+            int promoVideoRes,
+            String githubRepo,
+            String manifestUrl,
+            String betaManifestUrl,
+            PatchStrategy patchStrategy,
+            String targetGameVersionName,
+            long targetGameVersionCode,
+            String patchVersionLabel,
+            boolean comingSoon,
+            String statLines,
+            String statScope,
+            String statCompat,
+            String statSafety,
+            String defaultStoreDeveloper,
+            String defaultStoreScore,
+            String defaultStoreInstalls,
+            String defaultStoreSummary,
+            int defaultTranslatedStrings,
+            List<String> defaultScreenshotsUrls,
+            String defaultScreenshotsHash
+    ) {
         this.id = id;
         this.title = title;
         this.arabicTitle = arabicTitle;
@@ -89,6 +136,16 @@ public final class GameProfile {
         this.defaultStoreInstalls = defaultStoreInstalls != null ? defaultStoreInstalls : "";
         this.defaultStoreSummary = defaultStoreSummary != null ? defaultStoreSummary : "";
         this.defaultTranslatedStrings = Math.max(0, defaultTranslatedStrings);
+        List<String> cleanShots = new ArrayList<>();
+        if (defaultScreenshotsUrls != null) {
+            for (String u : defaultScreenshotsUrls) {
+                if (u != null && u.trim().startsWith("https://")) {
+                    cleanShots.add(u.trim());
+                }
+            }
+        }
+        this.defaultScreenshotsUrls = Collections.unmodifiableList(cleanShots);
+        this.defaultScreenshotsHash = defaultScreenshotsHash != null ? defaultScreenshotsHash.trim().toLowerCase() : "";
     }
 
     public boolean hasOnlineConfig() {

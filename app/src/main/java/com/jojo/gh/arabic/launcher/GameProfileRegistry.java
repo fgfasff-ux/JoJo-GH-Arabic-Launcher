@@ -3,6 +3,7 @@ package com.jojo.gh.arabic.launcher;
 import android.graphics.Color;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -48,7 +49,16 @@ public final class GameProfileRegistry {
                     "4.5 ★",
                     "+1,000,000",
                     "كوّن فريق أحلامك من 6 أجيال من أبطال جوجو في لعبة تقمص الأدوار الرسمية ثلاثية الأبعاد بقدرات الستاند الاستراتيجية.",
-                    15967
+                    15967,
+                    Arrays.asList(
+                            "https://play-lh.googleusercontent.com/sX0IfnPvBEkkbMyWNSmJXPcj27eOo1F4F0d-KS9M7P9PbAZ-CP5kF6wZ1cNmN9kjhgLrDmobgSl51Slju4k=w1280",
+                            "https://play-lh.googleusercontent.com/3lFDQrOHr4DZQEZ2l6GcRHjXkF542QeUh9lsDHZwXY9wRgJy4fgum6-zS-sOb-ksKF_TiW_Q8X7HFyYBsah2444=w1280",
+                            "https://play-lh.googleusercontent.com/mn13tXbk-iHbDbwytDiBLRVnfCCtr681FmWaeDfdMiW0zjQX7_oNMflCSU6lDgsCniQT1Ew3GtDnS7_qp43UPVM=w1280",
+                            "https://play-lh.googleusercontent.com/etYOzTQapiFlDotsBtpLm5iEQAuebR080a7bRM27-6khwBvR8TuYr_zwkyt1WwPoAnM-TGuQI62xmyd9EZdBXbk=w1280",
+                            "https://play-lh.googleusercontent.com/sSV8sh5pwKcaW3XKh461y7GCtXzQO0gRq3gIMqXV6s05zMD7DjfhPZyXJdpqw9hjuH3lLvr5kmZKHktMsqYpIKY=w1280",
+                            "https://play-lh.googleusercontent.com/i28I5vhCpF5rWH4FhzgjZx_68k_v51VZB15fX91DN9OrdA5staX-J26MN8P8UoXY75_Xqk1cFryw43WaLfYUocc=w1280"
+                    ),
+                    "84a4242904daf457"
             ));
 
             // 2) Dragon Ball Legends — قريباً (جاهز بمحرك ASSET_REPLACE لإظهار قابلية التوسع)

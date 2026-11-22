@@ -40,11 +40,13 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewOutlineProvider;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.AccelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -230,6 +232,22 @@ public class MainActivity extends Activity {
     private TextView tvStoreSummary;
     private TextView tvEditorialVersionBox;
     private TextView tvEditorialCompatText;
+    private TextView tvHubEyebrow;
+    private TextView tvHubTitle;
+    private TextView tvHubSubtitle;
+    private TextView tvHubBadgeLabel;
+    private LinearLayout hubSocialPill;
+    private String activeSocialUrl = "";
+    private LinearLayout storeScreenshotsSection;
+    private HorizontalScrollView storeScreenshotsScroll;
+    private LinearLayout storeScreenshotsRow;
+    private FrameLayout screenshotLightboxOverlay;
+    private FrameLayout lightboxCardWrap;
+    private ImageView ivLightboxImage;
+    private TextView tvLightboxHint;
+    private View lightboxOriginView;
+    private boolean isLightboxOpen = false;
+    private boolean isLightboxAnimating = false;
     private LinearLayout changelogCardsContainer;
     private View heroDevBadge;
     private final Runnable heroBadgeHideRunnable = () -> {
@@ -369,6 +387,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (isLightboxOpen) {
+            collapseScreenshotLightbox();
+            return;
+        }
         if (isOnGameHub) {
             if (isBusy) {
                 Toast.makeText(this, "يرجى الانتظار حتى انتهاء العملية الحالية...", Toast.LENGTH_SHORT).show();
@@ -649,6 +671,10 @@ public class MainActivity extends Activity {
         rootHost.addView(homeScreenView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         rootHost.addView(gameHubScreenView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        screenshotLightboxOverlay = buildScreenshotLightboxOverlay();
+        rootHost.addView(screenshotLightboxOverlay, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         isOnGameHub = false;
@@ -1366,6 +1392,13 @@ public class MainActivity extends Activity {
 
     private void showHomeLibrary() {
         isOnGameHub = false;
+        if (screenshotLightboxOverlay != null) {
+            screenshotLightboxOverlay.animate().cancel();
+            screenshotLightboxOverlay.setVisibility(View.GONE);
+            isLightboxOpen = false;
+            isLightboxAnimating = false;
+            lightboxOriginView = null;
+        }
         mainHandler.removeCallbacks(hidePromoAudioRunnable);
         mainHandler.removeCallbacks(promoFadeRunnable);
         cancelHeroDevBadgeAnimation();
@@ -1598,17 +1631,17 @@ public class MainActivity extends Activity {
 
         LinearLayout titleCol = new LinearLayout(this);
         titleCol.setOrientation(LinearLayout.VERTICAL);
-        TextView tvEyebrow = makeText("ANDROID • ARABIC LOCALIZATION UPDATE", 8.8f, LauncherConfig.COL_CYAN, true);
-        tvEyebrow.setLetterSpacing(0.06f);
-        titleCol.addView(tvEyebrow);
+        tvHubEyebrow = makeText("ANDROID • ARABIC LOCALIZATION UPDATE", 8.8f, LauncherConfig.COL_CYAN, true);
+        tvHubEyebrow.setLetterSpacing(0.06f);
+        titleCol.addView(tvHubEyebrow);
 
-        TextView tvGameTitle = makeText(LauncherConfig.APP_TITLE, 16.5f, LauncherConfig.COL_GOLD, true);
-        tvGameTitle.setPadding(0, dp(2), 0, 0);
-        titleCol.addView(tvGameTitle);
+        tvHubTitle = makeText(LauncherConfig.APP_TITLE, 16.5f, LauncherConfig.COL_GOLD, true);
+        tvHubTitle.setPadding(0, dp(2), 0, 0);
+        titleCol.addView(tvHubTitle);
 
-        TextView tvSub = makeText("تحديث تعريب جوجو: الترنيمة الذهبية — للأندرويد", 11.2f, LauncherConfig.COL_TEXT, false);
-        tvSub.setPadding(0, dp(2), 0, 0);
-        titleCol.addView(tvSub);
+        tvHubSubtitle = makeText("تحديث تعريب جوجو: الترنيمة الذهبية — للأندرويد", 11.2f, LauncherConfig.COL_TEXT, false);
+        tvHubSubtitle.setPadding(0, dp(2), 0, 0);
+        titleCol.addView(tvHubSubtitle);
 
         titleRow.addView(titleCol, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         editorialBody.addView(titleRow);
@@ -1621,19 +1654,19 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         vsLp.topMargin = dp(12);
 
-        TextView badgeSolidGold = makeText("تحديث تعريب", 10.8f, Color.parseColor("#07121A"), true);
-        badgeSolidGold.setSingleLine(true);
-        badgeSolidGold.setPadding(dp(11), dp(5), dp(11), dp(5));
+        tvHubBadgeLabel = makeText("تحديث تعريب", 10.8f, Color.parseColor("#07121A"), true);
+        tvHubBadgeLabel.setSingleLine(true);
+        tvHubBadgeLabel.setPadding(dp(11), dp(5), dp(11), dp(5));
         GradientDrawable bsgBg = new GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
                 new int[]{LauncherConfig.COL_GOLD, LauncherConfig.COL_GOLD_SOLID}
         );
         bsgBg.setCornerRadius(dp(7));
-        badgeSolidGold.setBackground(bsgBg);
+        tvHubBadgeLabel.setBackground(bsgBg);
         LinearLayout.LayoutParams bsgLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         bsgLp.leftMargin = dp(6);
-        verStrip.addView(badgeSolidGold, bsgLp);
+        verStrip.addView(tvHubBadgeLabel, bsgLp);
 
         tvEditorialVersionBox = makeText("v1.0.0", 10.8f, LauncherConfig.COL_GOLD, true);
         tvEditorialVersionBox.setSingleLine(true);
@@ -1663,7 +1696,7 @@ public class MainActivity extends Activity {
 
         editorialBody.addView(verStrip, vsLp);
 
-        // شريط Instagram السريع داخل الترويسة
+        // شريط حساب المطوّر السريع داخل الترويسة (قابل للتعديل عن بُعد من Mobile Hub Studio)
         LinearLayout heroSocialRow = new LinearLayout(this);
         heroSocialRow.setOrientation(LinearLayout.HORIZONTAL);
         heroSocialRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -1671,29 +1704,26 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         hsrLp.topMargin = dp(9);
 
-        View igPill = makeInstagramPill("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE + " ↗", 10.2f, 13, 11, 4);
-        igPill.setOnClickListener(v -> openInstagramSupport());
-        heroSocialRow.addView(igPill);
+        hubSocialPill = makeInstagramPill("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE + " ↗", 10.2f, 13, 11, 4);
+        hubSocialPill.setOnClickListener(v -> {
+            if (activeSocialUrl != null && activeSocialUrl.startsWith("https://")) {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(activeSocialUrl)));
+                    return;
+                } catch (Throwable ignored) {
+                }
+            }
+            openInstagramSupport();
+        });
+        heroSocialRow.addView(hubSocialPill);
         editorialBody.addView(heroSocialRow, hsrLp);
 
         heroCard.addView(editorialBody);
         root.addView(heroCard, makeCardLp());
 
         // ---------------------------------------------------------------------
-        // 2) قسم «أبرز التحسينات والإصلاحات» بالترقيم المعيّني الذهبي (◆ 1, 2, 3, 4)
-        // ---------------------------------------------------------------------
-        root.addView(makeEditorialSectionHeader("أبرز التحسينات والإصلاحات"), makeSectionHdrLp());
-
-        changelogCardsContainer = new LinearLayout(this);
-        changelogCardsContainer.setOrientation(LinearLayout.VERTICAL);
-        root.addView(changelogCardsContainer, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        rebuildEditorialChangelogCards(latestRemoteManifest != null ? latestRemoteManifest.changelog : "");
-
-        root.addView(makeGoldDiamondDivider(), makeDividerLp());
-
-        // ---------------------------------------------------------------------
-        // 2.5) بطاقة معلومات اللعبة من المتجر (قابلة للضغط بتموّج بصري لفتح Google Play مباشرة)
+        // 2) بطاقة معلومات اللعبة من المتجر (Google Play) مباشرة أسفل البانر العلوي
+        //    قابلة للضغط بتموّج بصري لفتح صفحة اللعبة في المتجر + شريط لقطات الشاشة التفاعلي تحتها
         // ---------------------------------------------------------------------
         LinearLayout storeCard = makeCard(LauncherConfig.COL_BORDER);
         GradientDrawable storeBaseBg = new GradientDrawable(
@@ -1701,7 +1731,7 @@ public class MainActivity extends Activity {
                 new int[]{Color.parseColor("#0E202C"), LauncherConfig.COL_CARD}
         );
         storeBaseBg.setCornerRadius(dp(10));
-        storeBaseBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+        storeBaseBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
         GradientDrawable storeRippleMask = new GradientDrawable();
         storeRippleMask.setColor(Color.WHITE);
         storeRippleMask.setCornerRadius(dp(10));
@@ -1728,7 +1758,7 @@ public class MainActivity extends Activity {
         playIconLp.leftMargin = dp(8);
         storeHdrRow.addView(ivPlayLogo, playIconLp);
 
-        TextView storeHdr = makeText("معلومات اللعبة من المتجر (Google Play)", 11.8f, LauncherConfig.COL_TEXT, true);
+        TextView storeHdr = makeText("معلومات اللعبة من المتجر (Google Play)", 11.8f, LauncherConfig.COL_GOLD, true);
         storeHdrRow.addView(storeHdr, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView storeOpenArrow = makeText("المتجر ↗", 9.8f, Color.parseColor("#6EE7B7"), true);
@@ -1772,6 +1802,56 @@ public class MainActivity extends Activity {
         storeCard.addView(tvStoreSummary);
 
         root.addView(storeCard, makeCardLp());
+
+        // 2.2) معرض لقطات الشاشة الأفقي من Google Play (Horizontal Screenshots Carousel — Tap to Expand/Collapse)
+        storeScreenshotsSection = new LinearLayout(this);
+        storeScreenshotsSection.setOrientation(LinearLayout.VERTICAL);
+        storeScreenshotsSection.setVisibility(View.GONE);
+
+        LinearLayout shotsHdrRow = new LinearLayout(this);
+        shotsHdrRow.setOrientation(LinearLayout.HORIZONTAL);
+        shotsHdrRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams shotsHdrLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        shotsHdrLp.bottomMargin = dp(6);
+
+        TextView shotsTitle = makeText("◆  لقطات من داخل اللعبة", 11.4f, LauncherConfig.COL_GOLD, true);
+        shotsHdrRow.addView(shotsTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView shotsHint = makeText("اضغط للتكبير  🔍", 9.6f, LauncherConfig.COL_MUTED, false);
+        shotsHdrRow.addView(shotsHint);
+        storeScreenshotsSection.addView(shotsHdrRow, shotsHdrLp);
+
+        storeScreenshotsScroll = new HorizontalScrollView(this);
+        storeScreenshotsScroll.setHorizontalScrollBarEnabled(false);
+        storeScreenshotsScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        storeScreenshotsScroll.setFillViewport(false);
+
+        storeScreenshotsRow = new LinearLayout(this);
+        storeScreenshotsRow.setOrientation(LinearLayout.HORIZONTAL);
+        storeScreenshotsRow.setGravity(Gravity.CENTER_VERTICAL);
+        storeScreenshotsRow.setPadding(dp(2), dp(2), dp(2), dp(4));
+        storeScreenshotsScroll.addView(storeScreenshotsRow, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT));
+        storeScreenshotsSection.addView(storeScreenshotsScroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        root.addView(storeScreenshotsSection, makeCardLp());
+
+        root.addView(makeGoldDiamondDivider(), makeDividerLp());
+
+        // ---------------------------------------------------------------------
+        // 2.5) قسم «أبرز التحسينات والإصلاحات» بالترقيم المعيّني الذهبي (◆ 1, 2, 3, 4)
+        // ---------------------------------------------------------------------
+        root.addView(makeEditorialSectionHeader("أبرز التحسينات والإصلاحات"), makeSectionHdrLp());
+
+        changelogCardsContainer = new LinearLayout(this);
+        changelogCardsContainer.setOrientation(LinearLayout.VERTICAL);
+        root.addView(changelogCardsContainer, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        rebuildEditorialChangelogCards(latestRemoteManifest != null ? latestRemoteManifest.changelog : "");
+
+        root.addView(makeGoldDiamondDivider(), makeDividerLp());
 
         // ---------------------------------------------------------------------
         // 3) بطاقة حالة التعريب وحارس الأمان + شريط التقدم + مسار الخطوات (4 مراحل)
@@ -2658,6 +2738,272 @@ public class MainActivity extends Activity {
                         }
                     });
         }
+        syncStoreScreenshotsForProfile(profile, manifest);
+    }
+
+    private void syncStoreScreenshotsForProfile(GameProfile profile, PatchManifest manifest) {
+        if (profile == null) {
+            return;
+        }
+        List<String> urls = (manifest != null && !manifest.screenshotsUrls.isEmpty())
+                ? manifest.screenshotsUrls
+                : profile.defaultScreenshotsUrls;
+        String hash = (manifest != null && !manifest.screenshotsUrls.isEmpty())
+                ? manifest.screenshotsHash
+                : profile.defaultScreenshotsHash;
+        if (urls == null || urls.isEmpty()) {
+            return;
+        }
+        GameIconCache.syncScreenshotsAsync(
+                this, iconExecutor, mainHandler,
+                profile.id, urls, hash,
+                files -> {
+                    if (profile.id.equals(activeProfile.id)) {
+                        renderStoreScreenshotsCarousel(files);
+                    }
+                });
+    }
+
+    private void renderStoreScreenshotsCarousel(List<File> files) {
+        if (storeScreenshotsSection == null || storeScreenshotsRow == null) {
+            return;
+        }
+        storeScreenshotsRow.removeAllViews();
+        if (files == null || files.isEmpty()) {
+            storeScreenshotsSection.setVisibility(View.GONE);
+            return;
+        }
+        storeScreenshotsSection.setVisibility(View.VISIBLE);
+        final int total = files.size();
+        for (int i = 0; i < total; i++) {
+            final int idx = i;
+            final File shotFile = files.get(i);
+
+            FrameLayout card = new FrameLayout(this);
+            GradientDrawable borderBg = new GradientDrawable();
+            borderBg.setColor(LauncherConfig.COL_CARD_INNER);
+            borderBg.setCornerRadius(dp(12));
+            borderBg.setStroke(dp(1), Color.parseColor("#88C8A252"));
+            card.setBackground(borderBg);
+            card.setPadding(dp(2), dp(2), dp(2), dp(2));
+
+            ImageView iv = new ImageView(this);
+            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            clipRounded(iv, dp(10));
+            card.addView(iv, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+            // تحميل مصغّر خفيف من القرص المحلي بدون تعطيل واجهة المستخدم
+            iconExecutor.execute(() -> {
+                Bitmap thumb = GameIconCache.decodeScaledBitmap(shotFile, 520);
+                if (thumb != null) {
+                    mainHandler.post(() -> iv.setImageBitmap(thumb));
+                }
+            });
+
+            // شارة ترقيم خفيفة في الزاوية للتكبير التفاعلي
+            TextView badge = makeText((idx + 1) + "/" + total, 8.8f, LauncherConfig.COL_GOLD, true);
+            badge.setPadding(dp(6), dp(2), dp(6), dp(2));
+            GradientDrawable bBg = new GradientDrawable();
+            bBg.setColor(Color.parseColor("#B807121A"));
+            bBg.setCornerRadius(dp(6));
+            bBg.setStroke(dp(1), Color.parseColor("#66C8A252"));
+            badge.setBackground(bBg);
+            FrameLayout.LayoutParams bLp = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM | Gravity.LEFT);
+            bLp.setMargins(dp(6), dp(6), dp(6), dp(6));
+            card.addView(badge, bLp);
+
+            card.setClickable(true);
+            card.setFocusable(true);
+            card.setOnClickListener(v -> expandScreenshotLightbox(card, shotFile, idx, total));
+
+            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(dp(178), dp(104));
+            cardLp.leftMargin = dp(8);
+            storeScreenshotsRow.addView(card, cardLp);
+        }
+    }
+
+    private FrameLayout buildScreenshotLightboxOverlay() {
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.parseColor("#E6050D13"));
+        overlay.setVisibility(View.GONE);
+        overlay.setAlpha(0f);
+        overlay.setClickable(true);
+        overlay.setFocusable(true);
+        overlay.setOnClickListener(v -> collapseScreenshotLightbox());
+
+        lightboxCardWrap = new FrameLayout(this);
+        GradientDrawable frameBg = new GradientDrawable();
+        frameBg.setColor(Color.parseColor("#08141C"));
+        frameBg.setCornerRadius(dp(14));
+        frameBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        lightboxCardWrap.setBackground(frameBg);
+        lightboxCardWrap.setPadding(dp(3), dp(3), dp(3), dp(3));
+
+        ivLightboxImage = new ImageView(this);
+        ivLightboxImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        ivLightboxImage.setAdjustViewBounds(true);
+        clipRounded(ivLightboxImage, dp(11));
+        ivLightboxImage.setClickable(true);
+        ivLightboxImage.setOnClickListener(v -> collapseScreenshotLightbox());
+        lightboxCardWrap.addView(ivLightboxImage, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+
+        FrameLayout.LayoutParams wrapLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        wrapLp.setMargins(dp(14), dp(52), dp(14), dp(42));
+        overlay.addView(lightboxCardWrap, wrapLp);
+
+        tvLightboxHint = makeText("اضغط على الصورة للتصغير والعودة", 10.8f, LauncherConfig.COL_GOLD, true);
+        tvLightboxHint.setPadding(dp(14), dp(6), dp(14), dp(6));
+        GradientDrawable hintBg = new GradientDrawable();
+        hintBg.setColor(Color.parseColor("#CC0B1E28"));
+        hintBg.setCornerRadius(dp(18));
+        hintBg.setStroke(dp(1), Color.parseColor("#88C8A252"));
+        tvLightboxHint.setBackground(hintBg);
+        FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        hintLp.topMargin = dp(22);
+        overlay.addView(tvLightboxHint, hintLp);
+
+        return overlay;
+    }
+
+    private void expandScreenshotLightbox(View originThumb, File shotFile, int index, int total) {
+        if (screenshotLightboxOverlay == null || ivLightboxImage == null || lightboxCardWrap == null || shotFile == null) {
+            return;
+        }
+        if (isLightboxAnimating || isLightboxOpen) {
+            return;
+        }
+        isLightboxAnimating = true;
+        lightboxOriginView = originThumb;
+
+        iconExecutor.execute(() -> {
+            Bitmap fullBmp = GameIconCache.decodeScaledBitmap(shotFile, 1600);
+            mainHandler.post(() -> {
+                if (fullBmp == null || screenshotLightboxOverlay == null) {
+                    isLightboxAnimating = false;
+                    return;
+                }
+                ivLightboxImage.setImageBitmap(fullBmp);
+                if (tvLightboxHint != null) {
+                    tvLightboxHint.setText("لقطة " + (index + 1) + " من " + total + "  •  اضغط على الصورة للتصغير");
+                }
+                screenshotLightboxOverlay.setAlpha(0f);
+                screenshotLightboxOverlay.setVisibility(View.VISIBLE);
+                lightboxCardWrap.setAlpha(0f);
+
+                lightboxCardWrap.post(() -> {
+                    int[] origLoc = new int[2];
+                    int[] targetLoc = new int[2];
+                    if (originThumb != null) {
+                        originThumb.getLocationInWindow(origLoc);
+                    }
+                    lightboxCardWrap.getLocationInWindow(targetLoc);
+
+                    float origW = originThumb != null && originThumb.getWidth() > 0 ? originThumb.getWidth() : dp(178);
+                    float origH = originThumb != null && originThumb.getHeight() > 0 ? originThumb.getHeight() : dp(104);
+                    float targetW = Math.max(1f, lightboxCardWrap.getWidth());
+                    float targetH = Math.max(1f, lightboxCardWrap.getHeight());
+
+                    float startScaleX = Math.max(0.18f, Math.min(0.95f, origW / targetW));
+                    float startScaleY = Math.max(0.18f, Math.min(0.95f, origH / targetH));
+                    float startDx = (origLoc[0] + origW / 2f) - (targetLoc[0] + targetW / 2f);
+                    float startDy = (origLoc[1] + origH / 2f) - (targetLoc[1] + targetH / 2f);
+
+                    lightboxCardWrap.setScaleX(startScaleX);
+                    lightboxCardWrap.setScaleY(startScaleY);
+                    lightboxCardWrap.setTranslationX(startDx);
+                    lightboxCardWrap.setTranslationY(startDy);
+                    lightboxCardWrap.setAlpha(1f);
+
+                    screenshotLightboxOverlay.animate().cancel();
+                    lightboxCardWrap.animate().cancel();
+
+                    screenshotLightboxOverlay.animate()
+                            .alpha(1f)
+                            .setDuration(260L)
+                            .setInterpolator(new DecelerateInterpolator())
+                            .start();
+
+                    lightboxCardWrap.animate()
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .translationX(0f)
+                            .translationY(0f)
+                            .setDuration(270L)
+                            .setInterpolator(new DecelerateInterpolator())
+                            .withEndAction(() -> {
+                                isLightboxOpen = true;
+                                isLightboxAnimating = false;
+                            })
+                            .start();
+                });
+            });
+        });
+    }
+
+    private void collapseScreenshotLightbox() {
+        if (screenshotLightboxOverlay == null || lightboxCardWrap == null || !isLightboxOpen || isLightboxAnimating) {
+            return;
+        }
+        isLightboxAnimating = true;
+
+        float endScaleX = 0.25f;
+        float endScaleY = 0.25f;
+        float endDx = 0f;
+        float endDy = 0f;
+
+        if (lightboxOriginView != null && lightboxOriginView.isAttachedToWindow()) {
+            int[] origLoc = new int[2];
+            int[] targetLoc = new int[2];
+            lightboxOriginView.getLocationInWindow(origLoc);
+            lightboxCardWrap.getLocationInWindow(targetLoc);
+
+            float origW = Math.max(1f, lightboxOriginView.getWidth());
+            float origH = Math.max(1f, lightboxOriginView.getHeight());
+            float targetW = Math.max(1f, lightboxCardWrap.getWidth());
+            float targetH = Math.max(1f, lightboxCardWrap.getHeight());
+
+            endScaleX = Math.max(0.18f, Math.min(0.95f, origW / targetW));
+            endScaleY = Math.max(0.18f, Math.min(0.95f, origH / targetH));
+            endDx = (origLoc[0] + origW / 2f) - (targetLoc[0] + targetW / 2f);
+            endDy = (origLoc[1] + origH / 2f) - (targetLoc[1] + targetH / 2f);
+        }
+
+        screenshotLightboxOverlay.animate().cancel();
+        lightboxCardWrap.animate().cancel();
+
+        screenshotLightboxOverlay.animate()
+                .alpha(0f)
+                .setDuration(220L)
+                .setInterpolator(new AccelerateDecelerateInterpolator())
+                .start();
+
+        lightboxCardWrap.animate()
+                .scaleX(endScaleX)
+                .scaleY(endScaleY)
+                .translationX(endDx)
+                .translationY(endDy)
+                .alpha(0.15f)
+                .setDuration(220L)
+                .setInterpolator(new AccelerateDecelerateInterpolator())
+                .withEndAction(() -> {
+                    screenshotLightboxOverlay.setVisibility(View.GONE);
+                    lightboxCardWrap.setScaleX(1f);
+                    lightboxCardWrap.setScaleY(1f);
+                    lightboxCardWrap.setTranslationX(0f);
+                    lightboxCardWrap.setTranslationY(0f);
+                    lightboxCardWrap.setAlpha(1f);
+                    isLightboxOpen = false;
+                    isLightboxAnimating = false;
+                    lightboxOriginView = null;
+                })
+                .start();
     }
 
     private void applyDynamicMetadataToUi() {
@@ -2709,7 +3055,39 @@ public class MainActivity extends Activity {
             }
         }
 
-        // 2) تحديث بطاقة معلومات المتجر
+        // 1.75) تحديث حقول الهوية العلوية للبطاقة عن بُعد من Mobile Hub Studio (الاسم، العنوان الفرعي، الشارة، وحساب التواصل)
+        if (tvHubEyebrow != null) {
+            tvHubEyebrow.setText((m != null && !m.heroEyebrow.isEmpty())
+                    ? m.heroEyebrow
+                    : "ANDROID • ARABIC LOCALIZATION UPDATE");
+        }
+        if (tvHubTitle != null) {
+            tvHubTitle.setText((m != null && !m.displayTitle.isEmpty())
+                    ? m.displayTitle
+                    : activeProfile.title);
+        }
+        if (tvHubSubtitle != null) {
+            tvHubSubtitle.setText((m != null && !m.heroTagline.isEmpty())
+                    ? m.heroTagline
+                    : "تحديث تعريب جوجو: الترنيمة الذهبية — للأندرويد");
+        }
+        if (tvHubBadgeLabel != null) {
+            tvHubBadgeLabel.setText((m != null && !m.badgeLabel.isEmpty())
+                    ? m.badgeLabel
+                    : "تحديث تعريب");
+        }
+        activeSocialUrl = (m != null && !m.socialUrl.isEmpty()) ? m.socialUrl : "";
+        if (hubSocialPill != null && hubSocialPill.getChildCount() > 1 && hubSocialPill.getChildAt(1) instanceof TextView) {
+            String socialTxt = (m != null && !m.socialLabel.isEmpty())
+                    ? m.socialLabel
+                    : ("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE);
+            if (!socialTxt.contains("↗")) {
+                socialTxt = socialTxt + " ↗";
+            }
+            ((TextView) hubSocialPill.getChildAt(1)).setText(socialTxt);
+        }
+
+        // 2) تحديث بطاقة معلومات المتجر + معرض لقطات الشاشة المخزّن بالبصمة محلياً
         String score = (m != null && !m.storeScore.isEmpty()) ? m.storeScore : activeProfile.defaultStoreScore;
         String installs = (m != null && !m.storeInstalls.isEmpty()) ? m.storeInstalls : activeProfile.defaultStoreInstalls;
         String dev = (m != null && !m.storeDeveloper.isEmpty()) ? m.storeDeveloper : activeProfile.defaultStoreDeveloper;
@@ -2727,6 +3105,10 @@ public class MainActivity extends Activity {
         if (tvStoreSummary != null) {
             tvStoreSummary.setText(summary.isEmpty() ? activeProfile.subtitle : summary);
         }
+
+        List<File> cachedShots = GameIconCache.loadCachedScreenshotFiles(this, activeProfile.id);
+        renderStoreScreenshotsCarousel(cachedShots);
+        syncStoreScreenshotsForProfile(activeProfile, m);
 
         // 3) تحديث شرائح الإحصائيات المختصرة
         if (tvStatLinesChip != null) {

@@ -3,7 +3,12 @@ package com.jojo.gh.arabic.launcher;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * نموذج بيانات يمثّل ملف manifest.json أو manifest_beta.json المستضاف على GitHub Releases،
@@ -41,6 +46,14 @@ public final class PatchManifest {
     public final String bannerHash;
     public final String heroMediaUrl;
     public final String heroMediaHash;
+    public final String heroEyebrow;
+    public final String displayTitle;
+    public final String heroTagline;
+    public final String badgeLabel;
+    public final String socialLabel;
+    public final String socialUrl;
+    public final List<String> screenshotsUrls;
+    public final String screenshotsHash;
     public final String storeTitle;
     public final String storeSummary;
     public final String storeDeveloper;
@@ -77,7 +90,9 @@ public final class PatchManifest {
                 expectedForceConfSize,
                 releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
                 "public",
-                "", "", "", "", "", "", "", "", "", "", "", "", 0, 0, "",
+                "", "", "", "", "", "",
+                "", "", "", "", "", "", Collections.emptyList(), "",
+                "", "", "", "", "", "", 0, 0, "",
                 true, false, "", "", ""
         );
     }
@@ -104,7 +119,9 @@ public final class PatchManifest {
                 expectedForceConfSize,
                 releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
                 channel,
-                "", "", "", "", "", "", "", "", "", "", "", "", 0, 0, "",
+                "", "", "", "", "", "",
+                "", "", "", "", "", "", Collections.emptyList(), "",
+                "", "", "", "", "", "", 0, 0, "",
                 true, false, "", "", ""
         );
     }
@@ -134,6 +151,14 @@ public final class PatchManifest {
             String bannerHash,
             String heroMediaUrl,
             String heroMediaHash,
+            String heroEyebrow,
+            String displayTitle,
+            String heroTagline,
+            String badgeLabel,
+            String socialLabel,
+            String socialUrl,
+            List<String> screenshotsUrls,
+            String screenshotsHash,
             String storeTitle,
             String storeSummary,
             String storeDeveloper,
@@ -179,6 +204,22 @@ public final class PatchManifest {
         this.bannerHash = bannerHash != null ? bannerHash.trim().toLowerCase() : "";
         this.heroMediaUrl = heroMediaUrl != null ? heroMediaUrl.trim() : "";
         this.heroMediaHash = heroMediaHash != null ? heroMediaHash.trim().toLowerCase() : "";
+        this.heroEyebrow = heroEyebrow != null ? heroEyebrow.trim() : "";
+        this.displayTitle = displayTitle != null ? displayTitle.trim() : "";
+        this.heroTagline = heroTagline != null ? heroTagline.trim() : "";
+        this.badgeLabel = badgeLabel != null ? badgeLabel.trim() : "";
+        this.socialLabel = socialLabel != null ? socialLabel.trim() : "";
+        this.socialUrl = socialUrl != null ? socialUrl.trim() : "";
+        List<String> cleanShots = new ArrayList<>();
+        if (screenshotsUrls != null) {
+            for (String u : screenshotsUrls) {
+                if (u != null && u.trim().startsWith("https://")) {
+                    cleanShots.add(u.trim());
+                }
+            }
+        }
+        this.screenshotsUrls = Collections.unmodifiableList(cleanShots);
+        this.screenshotsHash = screenshotsHash != null ? screenshotsHash.trim().toLowerCase() : "";
         this.storeTitle = storeTitle != null ? storeTitle.trim() : "";
         this.storeSummary = storeSummary != null ? storeSummary.trim() : "";
         this.storeDeveloper = storeDeveloper != null ? storeDeveloper.trim() : "";
@@ -206,6 +247,8 @@ public final class PatchManifest {
                 expectedPatchedLangMd5, expectedPatchedLangSha256, expectedPatchedLangSize,
                 expectedForceConfSize, releaseDate, changelog, downloadUrl, sha256, sizeBytes,
                 targetSubpath, newChannel, iconUrl, iconHash, bannerUrl, bannerHash, heroMediaUrl, heroMediaHash,
+                heroEyebrow, displayTitle, heroTagline, badgeLabel, socialLabel, socialUrl,
+                screenshotsUrls, screenshotsHash,
                 storeTitle, storeSummary, storeDeveloper, storeScore, storeInstalls, storeContentRating,
                 statsTranslatedStrings, statsTotalRows, statsEngine,
                 securitySafe, securityMaintenance, securityMessage, feedbackWebhookUrl, rawJson
@@ -297,6 +340,24 @@ public final class PatchManifest {
             }
         }
 
+        List<String> screenshotsUrls = new ArrayList<>();
+        JSONArray shotsArr = obj.optJSONArray("screenshots_urls");
+        if ((shotsArr == null || shotsArr.length() == 0) && storeObj != null) {
+            shotsArr = storeObj.optJSONArray("screenshots_urls");
+        }
+        if (shotsArr != null) {
+            for (int i = 0; i < shotsArr.length() && i < 12; i++) {
+                String u = shotsArr.optString(i, "").trim();
+                if (u.startsWith("https://")) {
+                    screenshotsUrls.add(u);
+                }
+            }
+        }
+        String screenshotsHash = obj.optString("screenshots_hash", "").trim();
+        if (screenshotsHash.isEmpty() && storeObj != null) {
+            screenshotsHash = storeObj.optString("screenshots_hash", "").trim();
+        }
+
         return new PatchManifest(
                 patchVer,
                 latestPatchVer,
@@ -322,6 +383,14 @@ public final class PatchManifest {
                 obj.optString("banner_hash", ""),
                 obj.optString("hero_media_url", ""),
                 obj.optString("hero_media_hash", ""),
+                obj.optString("hero_eyebrow", ""),
+                obj.optString("display_title", ""),
+                obj.optString("hero_tagline", ""),
+                obj.optString("badge_label", ""),
+                obj.optString("social_label", ""),
+                obj.optString("social_url", ""),
+                screenshotsUrls,
+                screenshotsHash,
                 storeTitle,
                 storeSummary,
                 storeDeveloper,

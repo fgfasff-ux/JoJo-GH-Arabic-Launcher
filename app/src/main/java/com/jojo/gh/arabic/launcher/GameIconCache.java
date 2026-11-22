@@ -12,6 +12,8 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,6 +41,10 @@ public final class GameIconCache {
 
     public interface FileCallback {
         void onFileReady(File file);
+    }
+
+    public interface ScreenshotsCallback {
+        void onScreenshotsReady(List<File> files);
     }
 
     private GameIconCache() {
@@ -206,6 +212,159 @@ public final class GameIconCache {
                 saveCacheToken(prefs, key, expectedToken, cleanUrl);
                 if (callback != null && mainHandler != null) {
                     mainHandler.post(() -> callback.onFileReady(outFile));
+                }
+            } catch (Throwable ignored) {
+            }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // 4) معرض لقطات الشاشة من متجر Google Play (screenshots_urls + screenshots_hash)
+    // -------------------------------------------------------------------------
+
+    public static Bitmap decodeScaledBitmap(File file, int maxDimPx) {
+        if (file == null || !file.isFile() || file.length() < 16) {
+            return null;
+        }
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            int w = bounds.outWidth;
+            int h = bounds.outHeight;
+            if (w <= 0 || h <= 0) {
+                return null;
+            }
+            int sample = 1;
+            int maxSide = Math.max(w, h);
+            while (maxSide / (sample * 2) >= maxDimPx) {
+                sample *= 2;
+            }
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            opts.inPreferredConfig = Bitmap.Config.RGB_565;
+            return BitmapFactory.decodeFile(file.getAbsolutePath(), opts);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    public static List<File> loadCachedScreenshotFiles(Context context, String gameId) {
+        List<File> out = new ArrayList<>();
+        if (context == null || gameId == null || gameId.trim().isEmpty()) {
+            return out;
+        }
+        try {
+            Context appCtx = context.getApplicationContext();
+            SharedPreferences prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            int count = prefs.getInt("shots_count_" + gameId, 0);
+            for (int i = 0; i < count && i < 12; i++) {
+                File f = getCacheFile(appCtx, "shot_" + gameId + "_" + i, ".jpg");
+                if (f.isFile() && f.length() > 64) {
+                    out.add(f);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return out;
+    }
+
+    public static void syncScreenshotsAsync(
+            Context context,
+            Executor executor,
+            Handler mainHandler,
+            String gameId,
+            List<String> urls,
+            String expectedHash,
+            ScreenshotsCallback callback
+    ) {
+        if (context == null || gameId == null || gameId.trim().isEmpty() || urls == null || urls.isEmpty()) {
+            return;
+        }
+        final List<String> cleanUrls = new ArrayList<>();
+        StringBuilder joined = new StringBuilder();
+        for (String u : urls) {
+            if (u != null && u.trim().startsWith("https://")) {
+                String c = u.trim();
+                cleanUrls.add(c);
+                if (joined.length() > 0) joined.append('\n');
+                joined.append(c);
+                if (cleanUrls.size() >= 12) break;
+            }
+        }
+        if (cleanUrls.isEmpty()) {
+            return;
+        }
+        final Context appCtx = context.getApplicationContext();
+        final String expectedToken = buildCacheToken(expectedHash, joined.toString());
+        final String metaKey = "shots_" + gameId;
+
+        executor.execute(() -> {
+            try {
+                SharedPreferences prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                String savedToken = prefs.getString("token_" + metaKey, "");
+                int savedCount = prefs.getInt("shots_count_" + gameId, 0);
+
+                // إذا تطابقت بصمة screenshots_hash وكانت جميع الصور محفوظة محلياً، استخدمها فوراً بلا تحميل!
+                if (expectedToken.equals(savedToken) && savedCount == cleanUrls.size()) {
+                    List<File> cached = loadCachedScreenshotFiles(appCtx, gameId);
+                    if (cached.size() == cleanUrls.size()) {
+                        if (callback != null && mainHandler != null) {
+                            mainHandler.post(() -> callback.onScreenshotsReady(cached));
+                        }
+                        return;
+                    }
+                }
+
+                // تغيّرت البصمة أو لقطات الشاشة لأول مرة -> حمّل الصور الجديدة وحدّث الكاش بالبصمة
+                List<File> freshFiles = new ArrayList<>();
+                for (int i = 0; i < cleanUrls.size(); i++) {
+                    String shotUrl = cleanUrls.get(i);
+                    File outFile = getCacheFile(appCtx, "shot_" + gameId + "_" + i, ".jpg");
+                    try {
+                        byte[] bytes = downloadBytesFollowingRedirects(shotUrl, MAX_BANNER_BYTES);
+                        if (bytes == null || bytes.length < 64) {
+                            continue;
+                        }
+                        Bitmap decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                        if (decoded == null) {
+                            continue;
+                        }
+                        File tmp = new File(outFile.getParentFile(), outFile.getName() + ".tmp");
+                        try (FileOutputStream fos = new FileOutputStream(tmp)) {
+                            decoded.compress(Bitmap.CompressFormat.JPEG, 90, fos);
+                            fos.flush();
+                        }
+                        decoded.recycle();
+                        if (outFile.exists()) {
+                            outFile.delete();
+                        }
+                        if (!tmp.renameTo(outFile)) {
+                            tmp.delete();
+                        }
+                        if (outFile.isFile() && outFile.length() > 64) {
+                            freshFiles.add(outFile);
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+
+                if (!freshFiles.isEmpty()) {
+                    // تنظيف أي صور قديمة زائدة بعد التحديث
+                    for (int j = freshFiles.size(); j < Math.max(savedCount, 12); j++) {
+                        File stale = getCacheFile(appCtx, "shot_" + gameId + "_" + j, ".jpg");
+                        if (stale.exists()) {
+                            stale.delete();
+                        }
+                    }
+                    prefs.edit()
+                            .putString("token_" + metaKey, expectedToken)
+                            .putInt("shots_count_" + gameId, freshFiles.size())
+                            .apply();
+                    if (callback != null && mainHandler != null) {
+                        final List<File> ready = new ArrayList<>(freshFiles);
+                        mainHandler.post(() -> callback.onScreenshotsReady(ready));
+                    }
                 }
             } catch (Throwable ignored) {
             }
