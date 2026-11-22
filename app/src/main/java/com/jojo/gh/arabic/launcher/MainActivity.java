@@ -36,6 +36,8 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewOutlineProvider;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -218,6 +220,45 @@ public class MainActivity extends Activity {
     private TextView tvEditorialVersionBox;
     private TextView tvEditorialCompatText;
     private LinearLayout changelogCardsContainer;
+    private View heroDevBadge;
+    private final Runnable heroBadgeHideRunnable = () -> {
+        if (heroDevBadge == null) {
+            return;
+        }
+        heroDevBadge.animate().cancel();
+        heroDevBadge.animate()
+                .translationX(dp(220))
+                .alpha(0f)
+                .setDuration(450L)
+                .setInterpolator(new AccelerateInterpolator())
+                .withEndAction(() -> {
+                    if (heroDevBadge != null) {
+                        heroDevBadge.setVisibility(View.INVISIBLE);
+                    }
+                })
+                .start();
+    };
+    private final Runnable heroBadgeShowRunnable = () -> {
+        if (heroDevBadge == null || !isOnGameHub) {
+            return;
+        }
+        heroDevBadge.animate().cancel();
+        heroDevBadge.setTranslationX(dp(220));
+        heroDevBadge.setAlpha(0f);
+        heroDevBadge.setVisibility(View.VISIBLE);
+        heroDevBadge.animate()
+                .translationX(0f)
+                .alpha(1f)
+                .setDuration(450L)
+                .setInterpolator(new DecelerateInterpolator())
+                .withEndAction(() -> {
+                    if (isOnGameHub) {
+                        mainHandler.removeCallbacks(heroBadgeHideRunnable);
+                        mainHandler.postDelayed(heroBadgeHideRunnable, 3000L);
+                    }
+                })
+                .start();
+    };
     private volatile String lastInstallFailureReason = "";
 
     // حالة نافذة «اقتراح أو الإبلاغ عن مشكلة» (بحد أقصى 3 صور)
@@ -333,6 +374,7 @@ public class MainActivity extends Activity {
         super.onPause();
         mainHandler.removeCallbacks(hidePromoAudioRunnable);
         mainHandler.removeCallbacks(promoFadeRunnable);
+        cancelHeroDevBadgeAnimation();
         pausePromoVideo();
     }
 
@@ -341,6 +383,7 @@ public class MainActivity extends Activity {
         super.onDestroy();
         mainHandler.removeCallbacks(hidePromoAudioRunnable);
         mainHandler.removeCallbacks(promoFadeRunnable);
+        cancelHeroDevBadgeAnimation();
         releasePromoVideo();
         try {
             Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener);
@@ -854,18 +897,18 @@ public class MainActivity extends Activity {
             rowLp.bottomMargin = dp(10);
 
             View card1 = createHomeGameCard(profiles.get(i));
-            LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, dp(126), 1f);
+            LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, dp(138), 1f);
             lp1.leftMargin = dp(4);
             row.addView(card1, lp1);
 
             if (i + 1 < profiles.size()) {
                 View card2 = createHomeGameCard(profiles.get(i + 1));
-                LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, dp(126), 1f);
+                LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, dp(138), 1f);
                 lp2.rightMargin = dp(4);
                 row.addView(card2, lp2);
             } else {
                 View spacer = new View(this);
-                LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, dp(126), 1f);
+                LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, dp(138), 1f);
                 spLp.rightMargin = dp(4);
                 row.addView(spacer, spLp);
             }
@@ -953,16 +996,16 @@ public class MainActivity extends Activity {
         inner.addView(bottomScrim, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // 3) شارة أيقونة اللعبة الديناميكية المصغّرة في الزاوية العلوية اليسرى
+        // 3) أيقونة اللعبة البارزة في الزاوية (54dp × 54dp بإطار ذهبي رفيع وزوايا مستديرة 12dp)
         Bitmap cachedBmp = GameIconCache.loadCachedBitmap(this, profile.id);
         if (!profile.comingSoon && (cachedBmp != null || profile.iconRes != 0)) {
             FrameLayout miniIconWrap = new FrameLayout(this);
             GradientDrawable miBg = new GradientDrawable();
-            miBg.setColor(Color.parseColor("#CC07121A"));
-            miBg.setCornerRadius(dp(7));
+            miBg.setColor(Color.parseColor("#E607121A"));
+            miBg.setCornerRadius(dp(12));
             miBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
             miniIconWrap.setBackground(miBg);
-            miniIconWrap.setPadding(dp(1), dp(1), dp(1), dp(1));
+            miniIconWrap.setPadding(dp(2), dp(2), dp(2), dp(2));
 
             ImageView ivMini = new ImageView(this);
             if (cachedBmp != null) {
@@ -971,11 +1014,11 @@ public class MainActivity extends Activity {
                 ivMini.setImageResource(profile.iconRes);
             }
             ivMini.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            clipRounded(ivMini, dp(6));
-            miniIconWrap.addView(ivMini, new FrameLayout.LayoutParams(dp(24), dp(24)));
+            clipRounded(ivMini, dp(10));
+            miniIconWrap.addView(ivMini, new FrameLayout.LayoutParams(dp(50), dp(50)));
 
-            FrameLayout.LayoutParams miLp = new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.TOP | Gravity.LEFT);
-            miLp.setMargins(dp(7), dp(7), dp(7), dp(7));
+            FrameLayout.LayoutParams miLp = new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.TOP | Gravity.LEFT);
+            miLp.setMargins(dp(8), dp(8), dp(8), dp(8));
             inner.addView(miniIconWrap, miLp);
         }
 
@@ -1054,6 +1097,7 @@ public class MainActivity extends Activity {
         applyDynamicMetadataToUi();
         syncBetaModeUi();
         resumePromoVideo();
+        triggerHeroDevBadgeAnimation();
         refreshStatusAsync(null);
     }
 
@@ -1061,11 +1105,30 @@ public class MainActivity extends Activity {
         isOnGameHub = false;
         mainHandler.removeCallbacks(hidePromoAudioRunnable);
         mainHandler.removeCallbacks(promoFadeRunnable);
+        cancelHeroDevBadgeAnimation();
         pausePromoVideo();
         gameHubScreenView.setVisibility(View.GONE);
         homeScreenView.setVisibility(View.VISIBLE);
         syncBetaModeUi();
         refreshHomeCards();
+    }
+
+    private void cancelHeroDevBadgeAnimation() {
+        mainHandler.removeCallbacks(heroBadgeShowRunnable);
+        mainHandler.removeCallbacks(heroBadgeHideRunnable);
+        if (heroDevBadge != null) {
+            heroDevBadge.animate().cancel();
+            heroDevBadge.setTranslationX(dp(220));
+            heroDevBadge.setAlpha(0f);
+            heroDevBadge.setVisibility(View.INVISIBLE);
+        }
+    }
+
+    private void triggerHeroDevBadgeAnimation() {
+        cancelHeroDevBadgeAnimation();
+        if (heroDevBadge != null && isOnGameHub) {
+            mainHandler.postDelayed(heroBadgeShowRunnable, 2000L);
+        }
     }
 
     // =========================================================================
@@ -1188,11 +1251,15 @@ public class MainActivity extends Activity {
         promoInner.addView(scrim, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // شعار R.D.AV الذهبي المؤطر أعلى يمين البانر (مستوحى من التصميم التحريري المرجعي)
-        View rdavHeroEmblem = makeRdavFramedEmblem(50, false);
-        FrameLayout.LayoutParams emLp = new FrameLayout.LayoutParams(dp(50), dp(50), Gravity.TOP | Gravity.RIGHT);
+        // شارة المطور R.D.AV العائمة بصورة الأفاتار وحركة انبثاق/اختفاء سلسة (2s -> 3s -> إخفاء)
+        heroDevBadge = makeFloatingDeveloperBadge();
+        heroDevBadge.setTranslationX(dp(220));
+        heroDevBadge.setAlpha(0f);
+        heroDevBadge.setVisibility(View.INVISIBLE);
+        FrameLayout.LayoutParams emLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.RIGHT);
         emLp.setMargins(dp(10), dp(10), dp(10), dp(10));
-        promoInner.addView(rdavHeroEmblem, emLp);
+        promoInner.addView(heroDevBadge, emLp);
 
         // أيقونة زر كتم/تشغيل الصوت في الزاوية اليسرى العلوية (تظهر عند اللمس وتختفي تلقائياً)
         btnPromoAudio = makeText("🔊", 15f, Color.WHITE, true);
@@ -1806,6 +1873,86 @@ public class MainActivity extends Activity {
     // =========================================================================
     // عناصر الهوية التحريرية الفخمة (Luxury Dark-Teal & Gold Editorial Helpers)
     // =========================================================================
+
+    /**
+     * شارة المطور R.D.AV العائمة (Slide-In / Slide-Out Interactive Badge)
+     * تعرض صورة الأفاتار (rdav_avatar.jpg) بإطار ذهبي رفيع وتفتح حساب @R.D.AV على Instagram عند الضغط.
+     */
+    private View makeFloatingDeveloperBadge() {
+        LinearLayout pill = new LinearLayout(this);
+        pill.setOrientation(LinearLayout.HORIZONTAL);
+        pill.setGravity(Gravity.CENTER_VERTICAL);
+        pill.setPadding(dp(7), dp(5), dp(10), dp(5));
+
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#EB07121A"), Color.parseColor("#EB0D2230")}
+        );
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        GradientDrawable mask = new GradientDrawable();
+        mask.setColor(Color.WHITE);
+        mask.setCornerRadius(dp(12));
+        pill.setBackground(new RippleDrawable(
+                ColorStateList.valueOf(Color.parseColor("#44F3D078")),
+                bg,
+                mask
+        ));
+        pill.setClickable(true);
+        pill.setFocusable(true);
+        pill.setElevation(dp(4));
+
+        // صورة المطور الدائرية بإطار ذهبي ناعم
+        FrameLayout avatarWrap = new FrameLayout(this);
+        GradientDrawable avFrame = new GradientDrawable();
+        avFrame.setShape(GradientDrawable.OVAL);
+        avFrame.setColor(LauncherConfig.COL_CARD_INNER);
+        avFrame.setStroke(dp(1), LauncherConfig.COL_GOLD);
+        avatarWrap.setBackground(avFrame);
+        avatarWrap.setPadding(dp(2), dp(2), dp(2), dp(2));
+
+        ImageView ivAvatar = new ImageView(this);
+        ivAvatar.setImageResource(R.drawable.rdav_avatar);
+        ivAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        clipRounded(ivAvatar, dp(20));
+        avatarWrap.addView(ivAvatar, new FrameLayout.LayoutParams(dp(40), dp(40)));
+
+        LinearLayout.LayoutParams avLp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        avLp.leftMargin = dp(8);
+        pill.addView(avatarWrap, avLp);
+
+        // نص R.D.AV + شارة Instagram الصغيرة
+        LinearLayout textCol = new LinearLayout(this);
+        textCol.setOrientation(LinearLayout.VERTICAL);
+
+        TextView tvName = makeText("R.D.AV", 11.5f, LauncherConfig.COL_GOLD, true);
+        tvName.setSingleLine(true);
+        textCol.addView(tvName);
+
+        LinearLayout igSubRow = new LinearLayout(this);
+        igSubRow.setOrientation(LinearLayout.HORIZONTAL);
+        igSubRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams igSubLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        igSubLp.topMargin = dp(1);
+
+        ImageView ivIg = new ImageView(this);
+        ivIg.setImageResource(R.drawable.ic_instagram);
+        ivIg.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams igIconLp = new LinearLayout.LayoutParams(dp(11), dp(11));
+        igIconLp.leftMargin = dp(4);
+        igSubRow.addView(ivIg, igIconLp);
+
+        TextView tvHandle = makeText("@R.D.AV", 9.2f, Color.parseColor("#E2EDF4"), true);
+        tvHandle.setSingleLine(true);
+        igSubRow.addView(tvHandle);
+
+        textCol.addView(igSubRow, igSubLp);
+        pill.addView(textCol);
+
+        pill.setOnClickListener(v -> openInstagramSupport());
+        return pill;
+    }
 
     /**
      * شعار R.D.AV الذهبي الدائري المؤطر (مستوحى من ختم الاستوديو التحريري المرجعي).
