@@ -41,6 +41,7 @@ public final class PatchManifest {
     public final int statsTranslatedStrings;
     public final int statsTotalRows;
     public final String statsEngine;
+    public final String feedbackWebhookUrl;
     public final String rawJson;
 
     public PatchManifest(
@@ -64,7 +65,7 @@ public final class PatchManifest {
                 expectedForceConfSize,
                 releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
                 "public",
-                "", "", "", "", "", "", "", 0, 0, "", ""
+                "", "", "", "", "", "", "", 0, 0, "", "", ""
         );
     }
 
@@ -90,7 +91,7 @@ public final class PatchManifest {
                 expectedForceConfSize,
                 releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
                 channel,
-                "", "", "", "", "", "", "", 0, 0, "", ""
+                "", "", "", "", "", "", "", 0, 0, "", "", ""
         );
     }
 
@@ -121,6 +122,7 @@ public final class PatchManifest {
             int statsTranslatedStrings,
             int statsTotalRows,
             String statsEngine,
+            String feedbackWebhookUrl,
             String rawJson
     ) {
         this.patchVersion = patchVersion != null ? patchVersion.trim() : "1.0.0";
@@ -151,6 +153,7 @@ public final class PatchManifest {
         this.statsTranslatedStrings = Math.max(0, statsTranslatedStrings);
         this.statsTotalRows = Math.max(0, statsTotalRows);
         this.statsEngine = statsEngine != null ? statsEngine.trim() : "";
+        this.feedbackWebhookUrl = feedbackWebhookUrl != null ? feedbackWebhookUrl.trim() : "";
         this.rawJson = rawJson != null ? rawJson : "";
     }
 
@@ -191,6 +194,14 @@ public final class PatchManifest {
         int statsTotal = statsObj != null ? statsObj.optInt("total_rows", 0) : 0;
         String statsEngine = statsObj != null ? statsObj.optString("engine", "") : "";
 
+        String feedbackWebhook = obj.optString("feedback_webhook_url", "").trim();
+        if (feedbackWebhook.isEmpty()) {
+            JSONObject fbObj = obj.optJSONObject("feedback");
+            if (fbObj != null) {
+                feedbackWebhook = fbObj.optString("webhook_url", "").trim();
+            }
+        }
+
         return new PatchManifest(
                 obj.optString("patch_version", "1.0.0"),
                 obj.optString("game_version", LauncherConfig.TARGET_GAME_VERSION_NAME),
@@ -218,6 +229,7 @@ public final class PatchManifest {
                 statsTranslated,
                 statsTotal,
                 statsEngine,
+                feedbackWebhook,
                 jsonText
         );
     }

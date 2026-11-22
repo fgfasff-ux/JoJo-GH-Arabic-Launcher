@@ -10,7 +10,9 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
+import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.SurfaceTexture;
@@ -19,6 +21,7 @@ import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
@@ -26,6 +29,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.Surface;
@@ -44,6 +48,8 @@ import android.widget.Toast;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
@@ -52,6 +58,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -73,6 +80,8 @@ public class MainActivity extends Activity {
     private static final int REQ_SHIZUKU_PERMISSION = 1003;
     private static final int REQ_STORAGE_PERMISSION = 1004;
     private static final int REQ_PICK_LOCAL_ZIP = 1005;
+    private static final int REQ_PICK_FEEDBACK_IMAGES = 1006;
+    private static final int MAX_FEEDBACK_IMAGES = 3;
 
     private static final String PREFS_NAME = "jojo_gh_arabic_launcher_prefs";
     private static final String KEY_BRIDGE_TOKEN = "bridge_auth_token";
@@ -198,6 +207,7 @@ public class MainActivity extends Activity {
     private View btnDiagScan;
     private Button btnLaunchGame;
     private View btnRestore;
+    private View btnFeedback;
     private ImageView ivHubLogo;
     private TextView tvStatLinesChip;
     private TextView tvStatCompatChip;
@@ -206,6 +216,12 @@ public class MainActivity extends Activity {
     private TextView tvStoreDevPill;
     private TextView tvStoreSummary;
     private volatile String lastInstallFailureReason = "";
+
+    // حالة نافذة «اقتراح أو الإبلاغ عن مشكلة» (بحد أقصى 3 صور)
+    private final List<File> feedbackSelectedFiles = new ArrayList<>();
+    private LinearLayout feedbackThumbsRow;
+    private TextView feedbackAttachCountText;
+    private View feedbackAttachBtn;
 
     private final Shizuku.OnBinderReceivedListener shizukuBinderReceivedListener = () -> {
         mainHandler.post(() -> {
@@ -1266,9 +1282,24 @@ public class MainActivity extends Activity {
         root.addView(promoCard, makeCardLp());
 
         // ---------------------------------------------------------------------
-        // 2.5) بطاقة معلومات اللعبة من المتجر (مباشرة أسفل البانر المرئي بشعار Google Play)
+        // 2.5) بطاقة معلومات اللعبة من المتجر (قابلة للضغط بتموّج بصري لفتح Google Play مباشرة)
         // ---------------------------------------------------------------------
         LinearLayout storeCard = makeCard(LauncherConfig.COL_BORDER);
+        GradientDrawable storeBaseBg = new GradientDrawable();
+        storeBaseBg.setColor(LauncherConfig.COL_CARD);
+        storeBaseBg.setCornerRadius(dp(16));
+        storeBaseBg.setStroke(dp(1), Color.parseColor("#2A4D3E"));
+        GradientDrawable storeRippleMask = new GradientDrawable();
+        storeRippleMask.setColor(Color.WHITE);
+        storeRippleMask.setCornerRadius(dp(16));
+        storeCard.setBackground(new RippleDrawable(
+                ColorStateList.valueOf(Color.parseColor("#3300F076")),
+                storeBaseBg,
+                storeRippleMask
+        ));
+        storeCard.setClickable(true);
+        storeCard.setFocusable(true);
+        storeCard.setOnClickListener(v -> openPlayStoreForProfile(activeProfile));
 
         LinearLayout storeHdrRow = new LinearLayout(this);
         storeHdrRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -1284,8 +1315,19 @@ public class MainActivity extends Activity {
         playIconLp.leftMargin = dp(8);
         storeHdrRow.addView(ivPlayLogo, playIconLp);
 
-        TextView storeHdr = makeText("معلومات اللعبة من المتجر (Google Play)", 12.2f, LauncherConfig.COL_TEXT, true);
+        TextView storeHdr = makeText("معلومات اللعبة من المتجر (Google Play)", 11.8f, LauncherConfig.COL_TEXT, true);
         storeHdrRow.addView(storeHdr, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView storeOpenArrow = makeText("المتجر ↗", 9.8f, Color.parseColor("#6EE7B7"), true);
+        storeOpenArrow.setSingleLine(true);
+        storeOpenArrow.setPadding(dp(8), dp(3), dp(8), dp(3));
+        GradientDrawable soaBg = new GradientDrawable();
+        soaBg.setColor(Color.parseColor("#0E2921"));
+        soaBg.setCornerRadius(dp(8));
+        soaBg.setStroke(dp(1), Color.parseColor("#10B981"));
+        storeOpenArrow.setBackground(soaBg);
+        storeHdrRow.addView(storeOpenArrow);
+
         storeCard.addView(storeHdrRow, shRowLp);
 
         LinearLayout storePillsRow = new LinearLayout(this);
@@ -1493,8 +1535,23 @@ public class MainActivity extends Activity {
 
         LinearLayout.LayoutParams rowToolsLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        rowToolsLp.bottomMargin = dp(10);
+        rowToolsLp.bottomMargin = dp(9);
         root.addView(rowTools, rowToolsLp);
+
+        // 4. زر «💬 اقتراح أو الإبلاغ عن مشكلة» (ثيم أزرق سماوي داكن #0E2233 وحدود #38BDF8)
+        btnFeedback = makeIconButton(
+                "اقتراح أو الإبلاغ عن مشكلة",
+                R.drawable.ic_feedback_chat,
+                Color.parseColor("#0E2233"),
+                Color.parseColor("#BAE6FD"),
+                Color.parseColor("#38BDF8"),
+                12.5f
+        );
+        btnFeedback.setOnClickListener(v -> showFeedbackDialog());
+        LinearLayout.LayoutParams fbLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        fbLp.bottomMargin = dp(10);
+        root.addView(btnFeedback, fbLp);
 
         // ---------------------------------------------------------------------
         // 5) بطاقة تفاعلية لـ «📊 إحصائيات حزمة التعريب» (تفتح نافذة التفاصيل الكاملة)
@@ -2759,6 +2816,13 @@ public class MainActivity extends Activity {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 startLocalZipInstallFlow(data.getData());
             }
+            return;
+        }
+
+        if (requestCode == REQ_PICK_FEEDBACK_IMAGES) {
+            if (resultCode == RESULT_OK && data != null) {
+                handleFeedbackImagesPicked(data);
+            }
         }
     }
 
@@ -3468,6 +3532,637 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "لعبة JoJo: Golden Hymn غير مثبّتة على الجهاز.", Toast.LENGTH_SHORT).show();
     }
 
+    // =========================================================================
+    // فتح صفحة اللعبة في متجر Google Play
+    // =========================================================================
+
+    private void openPlayStoreForProfile(GameProfile profile) {
+        if (profile == null || profile.packageName == null || profile.packageName.trim().isEmpty()) {
+            return;
+        }
+        String pkg = profile.packageName.trim();
+        try {
+            Intent marketIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + pkg));
+            marketIntent.setPackage("com.android.vending");
+            marketIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(marketIntent);
+            return;
+        } catch (Throwable ignored) {
+        }
+        try {
+            Intent genericMarket = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + pkg));
+            genericMarket.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(genericMarket);
+            return;
+        } catch (Throwable ignored) {
+        }
+        openUrl("https://play.google.com/store/apps/details?id=" + pkg);
+    }
+
+    // =========================================================================
+    // نظام «💬 اقتراح أو الإبلاغ عن مشكلة» (حتى 3 صور + بيانات تقنية + FeedbackPayload)
+    // =========================================================================
+
+    private void clearFeedbackAttachmentsCache() {
+        feedbackSelectedFiles.clear();
+        try {
+            File dir = FeedbackAttachmentProvider.getAttachmentsDir(this);
+            File[] files = dir.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    f.delete();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void showFeedbackDialog() {
+        clearFeedbackAttachmentsCache();
+
+        final String[] selectedType = {FeedbackPayload.TYPE_BUG_REPORT};
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(dp(16), dp(14), dp(16), dp(12));
+        container.setBackgroundColor(LauncherConfig.COL_BG);
+
+        // ترويسة النافذة بالثيم السماوي الداكن
+        LinearLayout hdr = new LinearLayout(this);
+        hdr.setOrientation(LinearLayout.HORIZONTAL);
+        hdr.setGravity(Gravity.CENTER_VERTICAL);
+        hdr.setPadding(dp(12), dp(11), dp(12), dp(11));
+        GradientDrawable hdrBg = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.parseColor("#0E2233"), Color.parseColor("#11192D")}
+        );
+        hdrBg.setCornerRadius(dp(14));
+        hdrBg.setStroke(dp(1), Color.parseColor("#38BDF8"));
+        hdr.setBackground(hdrBg);
+
+        ImageView ivHdr = new ImageView(this);
+        ivHdr.setImageResource(R.drawable.ic_feedback_chat);
+        ivHdr.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams ivHdrLp = new LinearLayout.LayoutParams(dp(24), dp(24));
+        ivHdrLp.leftMargin = dp(10);
+        hdr.addView(ivHdr, ivHdrLp);
+
+        LinearLayout hdrTextCol = new LinearLayout(this);
+        hdrTextCol.setOrientation(LinearLayout.VERTICAL);
+        hdrTextCol.addView(makeText("اقتراح أو الإبلاغ عن مشكلة", 14.5f, Color.parseColor("#E0F2FE"), true));
+        TextView hdrSub = makeText(activeProfile.title + " • دعم R.D.AV", 10.5f, Color.parseColor("#7DD3FC"), false);
+        hdrSub.setPadding(0, dp(2), 0, 0);
+        hdrTextCol.addView(hdrSub);
+        hdr.addView(hdrTextCol, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        LinearLayout.LayoutParams hdrLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        hdrLp.bottomMargin = dp(12);
+        container.addView(hdr, hdrLp);
+
+        // 1) محدد نوع الرسالة: «الإبلاغ عن مشكلة» أو «اقتراح»
+        TextView lblType = makeText("نوع الرسالة:", 11.5f, LauncherConfig.COL_TEXT, true);
+        lblType.setPadding(0, 0, 0, dp(6));
+        container.addView(lblType);
+
+        LinearLayout typeRow = new LinearLayout(this);
+        typeRow.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams typeRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        typeRowLp.bottomMargin = dp(12);
+
+        TextView tabBug = makeText("🐞  الإبلاغ عن مشكلة", 12f, Color.WHITE, true);
+        tabBug.setGravity(Gravity.CENTER);
+        tabBug.setPadding(dp(10), dp(10), dp(10), dp(10));
+        tabBug.setClickable(true);
+
+        TextView tabSuggestion = makeText("💡  اقتراح تطوير", 12f, LauncherConfig.COL_MUTED, true);
+        tabSuggestion.setGravity(Gravity.CENTER);
+        tabSuggestion.setPadding(dp(10), dp(10), dp(10), dp(10));
+        tabSuggestion.setClickable(true);
+
+        Runnable updateTypeTabs = () -> {
+            boolean isBug = FeedbackPayload.TYPE_BUG_REPORT.equals(selectedType[0]);
+            GradientDrawable bugBg = new GradientDrawable();
+            bugBg.setCornerRadius(dp(11));
+            bugBg.setColor(isBug ? Color.parseColor("#3B1020") : LauncherConfig.COL_CARD_INNER);
+            bugBg.setStroke(dp(1), isBug ? Color.parseColor("#F43F5E") : LauncherConfig.COL_BORDER);
+            tabBug.setBackground(bugBg);
+            tabBug.setTextColor(isBug ? Color.parseColor("#FDA4AF") : LauncherConfig.COL_MUTED);
+
+            GradientDrawable sugBg = new GradientDrawable();
+            sugBg.setCornerRadius(dp(11));
+            sugBg.setColor(!isBug ? Color.parseColor("#0E2A3F") : LauncherConfig.COL_CARD_INNER);
+            sugBg.setStroke(dp(1), !isBug ? Color.parseColor("#38BDF8") : LauncherConfig.COL_BORDER);
+            tabSuggestion.setBackground(sugBg);
+            tabSuggestion.setTextColor(!isBug ? Color.parseColor("#7DD3FC") : LauncherConfig.COL_MUTED);
+        };
+        updateTypeTabs.run();
+
+        tabBug.setOnClickListener(v -> {
+            selectedType[0] = FeedbackPayload.TYPE_BUG_REPORT;
+            updateTypeTabs.run();
+        });
+        tabSuggestion.setOnClickListener(v -> {
+            selectedType[0] = FeedbackPayload.TYPE_SUGGESTION;
+            updateTypeTabs.run();
+        });
+
+        LinearLayout.LayoutParams tbLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        tbLp.leftMargin = dp(5);
+        typeRow.addView(tabBug, tbLp);
+
+        LinearLayout.LayoutParams tsLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        tsLp.rightMargin = dp(5);
+        typeRow.addView(tabSuggestion, tsLp);
+        container.addView(typeRow, typeRowLp);
+
+        // 2) حقل إدخال التفاصيل
+        TextView lblMsg = makeText("تفاصيل الرسالة:", 11.5f, LauncherConfig.COL_TEXT, true);
+        lblMsg.setPadding(0, 0, 0, dp(6));
+        container.addView(lblMsg);
+
+        EditText etDetails = new EditText(this);
+        etDetails.setHint("اكتب تفاصيل الاقتراح أو وصف المشكلة بوضوح (مثال: نص غير مترجم، خطأ في التثبيت...)");
+        etDetails.setHintTextColor(Color.parseColor("#6E628D"));
+        etDetails.setTextColor(LauncherConfig.COL_TEXT);
+        etDetails.setTextSize(12.2f);
+        etDetails.setTypeface(fontRegular);
+        etDetails.setGravity(Gravity.TOP | Gravity.START);
+        etDetails.setMinLines(4);
+        etDetails.setMaxLines(7);
+        etDetails.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        etDetails.setPadding(dp(12), dp(10), dp(12), dp(10));
+        GradientDrawable etBg = new GradientDrawable();
+        etBg.setColor(LauncherConfig.COL_CARD_INNER);
+        etBg.setCornerRadius(dp(12));
+        etBg.setStroke(dp(1), Color.parseColor("#2E3B59"));
+        etDetails.setBackground(etBg);
+        LinearLayout.LayoutParams etLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        etLp.bottomMargin = dp(12);
+        container.addView(etDetails, etLp);
+
+        // 3) إرفاق الصور (بحد أقصى 3 صور) + شريط المعاينة المصغّرة
+        LinearLayout attachHeader = new LinearLayout(this);
+        attachHeader.setOrientation(LinearLayout.HORIZONTAL);
+        attachHeader.setGravity(Gravity.CENTER_VERTICAL);
+        attachHeader.addView(makeText("الصور المرفقة (اختياري):", 11.5f, LauncherConfig.COL_TEXT, true),
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        feedbackAttachCountText = makeText("0 / 3 صور", 10.5f, Color.parseColor("#7DD3FC"), true);
+        attachHeader.addView(feedbackAttachCountText);
+        LinearLayout.LayoutParams ahLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        ahLp.bottomMargin = dp(6);
+        container.addView(attachHeader, ahLp);
+
+        feedbackAttachBtn = makeIconButton(
+                "إرفاق صور (بحد أقصى 3 صور)",
+                R.drawable.ic_photo_attach,
+                Color.parseColor("#102133"),
+                Color.parseColor("#BAE6FD"),
+                Color.parseColor("#38BDF8"),
+                11.8f
+        );
+        feedbackAttachBtn.setOnClickListener(v -> openFeedbackImagePicker());
+        LinearLayout.LayoutParams abLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
+        abLp.bottomMargin = dp(8);
+        container.addView(feedbackAttachBtn, abLp);
+
+        feedbackThumbsRow = new LinearLayout(this);
+        feedbackThumbsRow.setOrientation(LinearLayout.HORIZONTAL);
+        feedbackThumbsRow.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        feedbackThumbsRow.setVisibility(View.GONE);
+        LinearLayout.LayoutParams trLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        trLp.bottomMargin = dp(10);
+        container.addView(feedbackThumbsRow, trLp);
+
+        // 4) ملاحظة البيانات التقنية التلقائية
+        String autoVer = getInstalledGameVersion();
+        String techNoteText = "⚙ سيُرفق تلقائياً: " + activeProfile.title
+                + " • إصدار اللعبة: " + (autoVer != null ? autoVer : "غير مثبتة")
+                + " • التعريب: " + (installedPatchVersion.isEmpty() ? "—" : installedPatchVersion)
+                + " • اللانشر: v" + LauncherConfig.APP_VERSION
+                + " • " + Build.MANUFACTURER + " " + Build.MODEL;
+        TextView tvAutoTech = makeText(techNoteText, 10f, LauncherConfig.COL_MUTED, false);
+        tvAutoTech.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable tnBg = new GradientDrawable();
+        tnBg.setColor(LauncherConfig.COL_CARD_INNER);
+        tnBg.setCornerRadius(dp(9));
+        tnBg.setStroke(dp(1), Color.parseColor("#272044"));
+        tvAutoTech.setBackground(tnBg);
+        LinearLayout.LayoutParams tnLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        tnLp.bottomMargin = dp(12);
+        container.addView(tvAutoTech, tnLp);
+
+        scroll.addView(container);
+
+        AlertDialog dialog = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setView(scroll)
+                .create();
+
+        // أزرار الإرسال والإلغاء
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button btnSubmit = new Button(this);
+        btnSubmit.setText("إرسال البلاغ");
+        btnSubmit.setAllCaps(false);
+        btnSubmit.setTextSize(13f);
+        btnSubmit.setTextColor(Color.parseColor("#06131F"));
+        btnSubmit.setTypeface(fontBold);
+        GradientDrawable subBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#38BDF8"), Color.parseColor("#0EA5E9")}
+        );
+        subBg.setCornerRadius(dp(12));
+        btnSubmit.setBackground(subBg);
+        btnSubmit.setOnClickListener(v -> {
+            String msg = etDetails.getText() != null ? etDetails.getText().toString().trim() : "";
+            if (msg.length() < 4) {
+                Toast.makeText(this, "يرجى كتابة تفاصيل الاقتراح أو المشكلة أولاً.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            dialog.dismiss();
+            submitFeedbackPayload(selectedType[0], msg);
+        });
+        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(0, dp(46), 1.3f);
+        subLp.leftMargin = dp(6);
+        btnRow.addView(btnSubmit, subLp);
+
+        Button btnCancel = makeButton("إلغاء", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_MUTED, LauncherConfig.COL_BORDER, true);
+        btnCancel.setTextSize(12f);
+        btnCancel.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams canLp = new LinearLayout.LayoutParams(0, dp(46), 0.7f);
+        canLp.rightMargin = dp(6);
+        btnRow.addView(btnCancel, canLp);
+
+        container.addView(btnRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        dialog.show();
+    }
+
+    /**
+     * يفتح منتقي الصور الرسمي (Android Photo Picker على أندرويد 13+ أو SAF ACTION_OPEN_DOCUMENT)
+     * بدون الحاجة لأي صلاحية تخزين إضافية، مع احترام الحد الأقصى (3 صور).
+     */
+    private void openFeedbackImagePicker() {
+        int remaining = MAX_FEEDBACK_IMAGES - feedbackSelectedFiles.size();
+        if (remaining <= 0) {
+            Toast.makeText(this, "تم بلوغ الحد الأقصى (3 صور). احذف صورة لإضافة أخرى.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // محاولة استخدام Android Photo Picker الرسمي على API 33+ أولاً
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                Intent picker = new Intent(MediaStore.ACTION_PICK_IMAGES);
+                picker.setType("image/*");
+                if (remaining >= 2) {
+                    picker.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, remaining);
+                }
+                startActivityForResult(picker, REQ_PICK_FEEDBACK_IMAGES);
+                return;
+            } catch (Throwable ignored) {
+            }
+        }
+        // بديل SAF الآمن بدون صلاحيات لأندرويد 7–12
+        try {
+            Intent doc = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            doc.addCategory(Intent.CATEGORY_OPENABLE);
+            doc.setType("image/*");
+            if (remaining > 1) {
+                doc.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            }
+            startActivityForResult(doc, REQ_PICK_FEEDBACK_IMAGES);
+        } catch (Throwable t) {
+            try {
+                Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
+                fallback.setType("image/*");
+                if (remaining > 1) {
+                    fallback.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                }
+                startActivityForResult(fallback, REQ_PICK_FEEDBACK_IMAGES);
+            } catch (Throwable ignored) {
+                Toast.makeText(this, "تعذر فتح منتقي الصور على هذا الجهاز.", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private void handleFeedbackImagesPicked(Intent data) {
+        List<Uri> pickedUris = new ArrayList<>();
+        if (data.getClipData() != null) {
+            ClipData clip = data.getClipData();
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                Uri u = clip.getItemAt(i).getUri();
+                if (u != null) {
+                    pickedUris.add(u);
+                }
+            }
+        } else if (data.getData() != null) {
+            pickedUris.add(data.getData());
+        }
+        if (pickedUris.isEmpty()) {
+            return;
+        }
+
+        int remaining = MAX_FEEDBACK_IMAGES - feedbackSelectedFiles.size();
+        if (remaining <= 0) {
+            return;
+        }
+        boolean trimmed = pickedUris.size() > remaining;
+        List<Uri> toProcess = pickedUris.subList(0, Math.min(remaining, pickedUris.size()));
+
+        iconExecutor.execute(() -> {
+            List<File> added = new ArrayList<>();
+            for (Uri u : toProcess) {
+                File saved = copyAndResizeImageToCache(u);
+                if (saved != null) {
+                    added.add(saved);
+                }
+            }
+            mainHandler.post(() -> {
+                for (File f : added) {
+                    if (feedbackSelectedFiles.size() < MAX_FEEDBACK_IMAGES) {
+                        feedbackSelectedFiles.add(f);
+                    }
+                }
+                if (trimmed) {
+                    Toast.makeText(this, "تم إرفاق الحد الأقصى المسموح به (3 صور).", Toast.LENGTH_SHORT).show();
+                } else if (added.isEmpty()) {
+                    Toast.makeText(this, "تعذر قراءة الصورة المختارة.", Toast.LENGTH_SHORT).show();
+                }
+                refreshFeedbackThumbnails();
+            });
+        });
+    }
+
+    private File copyAndResizeImageToCache(Uri uri) {
+        try {
+            // 1) قراءة الأبعاد أولاً لحساب معامل التصغير وتجنب استهلاك الذاكرة (OOM)
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            try (InputStream is1 = getContentResolver().openInputStream(uri)) {
+                if (is1 == null) {
+                    return null;
+                }
+                BitmapFactory.decodeStream(is1, null, bounds);
+            }
+            int sample = 1;
+            int maxDim = Math.max(bounds.outWidth, bounds.outHeight);
+            while (maxDim / sample > 1280) {
+                sample *= 2;
+            }
+
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sample;
+            Bitmap bmp;
+            try (InputStream is2 = getContentResolver().openInputStream(uri)) {
+                if (is2 == null) {
+                    return null;
+                }
+                bmp = BitmapFactory.decodeStream(is2, null, opts);
+            }
+            if (bmp == null) {
+                return null;
+            }
+
+            File dir = FeedbackAttachmentProvider.getAttachmentsDir(this);
+            String fname = "feedback_img_" + System.currentTimeMillis() + "_" + (int) (Math.random() * 9999) + ".jpg";
+            File outFile = new File(dir, fname);
+            try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                bmp.compress(Bitmap.CompressFormat.JPEG, 84, fos);
+                fos.flush();
+            }
+            bmp.recycle();
+            return outFile;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private void refreshFeedbackThumbnails() {
+        if (feedbackThumbsRow == null) {
+            return;
+        }
+        int count = feedbackSelectedFiles.size();
+        if (feedbackAttachCountText != null) {
+            feedbackAttachCountText.setText(count + " / " + MAX_FEEDBACK_IMAGES + " صور");
+        }
+        if (feedbackAttachBtn != null) {
+            boolean canAddMore = count < MAX_FEEDBACK_IMAGES;
+            feedbackAttachBtn.setEnabled(canAddMore);
+            feedbackAttachBtn.setAlpha(canAddMore ? 1f : 0.45f);
+        }
+
+        feedbackThumbsRow.removeAllViews();
+        if (count == 0) {
+            feedbackThumbsRow.setVisibility(View.GONE);
+            return;
+        }
+        feedbackThumbsRow.setVisibility(View.VISIBLE);
+
+        for (int i = 0; i < count; i++) {
+            final File imgFile = feedbackSelectedFiles.get(i);
+            FrameLayout thumbBox = new FrameLayout(this);
+            GradientDrawable tbBg = new GradientDrawable();
+            tbBg.setColor(LauncherConfig.COL_CARD_INNER);
+            tbBg.setCornerRadius(dp(12));
+            tbBg.setStroke(dp(1), Color.parseColor("#38BDF8"));
+            thumbBox.setBackground(tbBg);
+            thumbBox.setPadding(dp(2), dp(2), dp(2), dp(2));
+
+            ImageView iv = new ImageView(this);
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inSampleSize = 4;
+            Bitmap thumbBmp = BitmapFactory.decodeFile(imgFile.getAbsolutePath(), o);
+            if (thumbBmp != null) {
+                iv.setImageBitmap(thumbBmp);
+            }
+            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            clipRounded(iv, dp(10));
+            thumbBox.addView(iv, new FrameLayout.LayoutParams(dp(76), dp(76)));
+
+            // زر حذف الصورة (✕) في الزاوية العلوية
+            TextView btnDel = makeText("✕", 11f, Color.WHITE, true);
+            btnDel.setGravity(Gravity.CENTER);
+            GradientDrawable delBg = new GradientDrawable();
+            delBg.setShape(GradientDrawable.OVAL);
+            delBg.setColor(Color.parseColor("#DC2626"));
+            delBg.setStroke(dp(1), Color.WHITE);
+            btnDel.setBackground(delBg);
+            btnDel.setOnClickListener(v -> {
+                feedbackSelectedFiles.remove(imgFile);
+                imgFile.delete();
+                refreshFeedbackThumbnails();
+            });
+            FrameLayout.LayoutParams delLp = new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP | Gravity.LEFT);
+            delLp.setMargins(dp(3), dp(3), dp(3), dp(3));
+            thumbBox.addView(btnDel, delLp);
+
+            LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(dp(80), dp(80));
+            boxLp.leftMargin = dp(8);
+            feedbackThumbsRow.addView(thumbBox, boxLp);
+        }
+    }
+
+    private void submitFeedbackPayload(String type, String message) {
+        final List<File> attachedCopy = new ArrayList<>(feedbackSelectedFiles);
+        final String installedVer = getInstalledGameVersion();
+        final long installedVc = getInstalledGameVersionCode();
+        final String remoteVer = latestRemoteManifest != null ? latestRemoteManifest.patchVersion : "";
+        final String webhookUrl = latestRemoteManifest != null ? latestRemoteManifest.feedbackWebhookUrl : "";
+
+        final FeedbackPayload payload = new FeedbackPayload(
+                type,
+                message,
+                activeProfile,
+                installedVer,
+                installedVc,
+                isPatchCurrentlyInstalled,
+                installedPatchVersion,
+                remoteVer,
+                BetaModeManager.isBetaEnabled(this),
+                attachedCopy
+        );
+
+        worker.execute(() -> {
+            payload.saveBundleLocally(this);
+            final String shareText = payload.formatShareText();
+
+            if (!webhookUrl.isEmpty()) {
+                try {
+                    boolean sent = payload.postToWebhookSync(webhookUrl);
+                    if (sent) {
+                        mainHandler.post(() -> Toast.makeText(
+                                this,
+                                "✓ تم إرسال البلاغ بنجاح إلى فريق R.D.AV! شكراً لمساهمتك.",
+                                Toast.LENGTH_LONG
+                        ).show());
+                        return;
+                    }
+                } catch (Throwable ignored) {
+                    // fallback للنسخ والمشاركة المباشرة عند تعذر الاتصال بالسحابة
+                    mainHandler.post(() -> {
+                        copyReportToClipboard(shareText, false);
+                        showFeedbackShareDialog(payload, shareText, true);
+                    });
+                    return;
+                }
+            }
+
+            // الوضع الجاهز قبل ضبط رابط الاستقبال السحابي: حفظ JSON محلياً + نسخ + مشاركة مع الصور لـ @R.D.AV
+            mainHandler.post(() -> {
+                copyReportToClipboard(shareText, false);
+                showFeedbackShareDialog(payload, shareText, false);
+            });
+        });
+    }
+
+    private void showFeedbackShareDialog(FeedbackPayload payload, String shareText, boolean cloudFallback) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(14), dp(16), dp(12));
+        root.setBackgroundColor(LauncherConfig.COL_BG);
+
+        String bannerMsg = cloudFallback
+                ? "تم حفظ حزمة البلاغ محلياً ونسخ النص والبيانات التقنية — تعذر الوصول للخادم السحابي، يمكنك إرسالها مباشرة الآن:"
+                : "✅  تم تجهيز وحفظ حزمة البلاغ (JSON + البيانات التقنية"
+                  + (payload.attachmentFiles.isEmpty() ? "" : " + " + payload.attachmentFiles.size() + " صور")
+                  + ") ونسخ النص تلقائياً للحافظة!";
+
+        TextView tvInfo = makeText(bannerMsg, 11.5f, LauncherConfig.COL_SUCCESS, true);
+        tvInfo.setPadding(dp(12), dp(10), dp(12), dp(10));
+        GradientDrawable infoBg = new GradientDrawable();
+        infoBg.setColor(Color.parseColor("#0F2D1F"));
+        infoBg.setCornerRadius(dp(10));
+        infoBg.setStroke(dp(1), LauncherConfig.COL_SUCCESS);
+        tvInfo.setBackground(infoBg);
+        LinearLayout.LayoutParams infLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        infLp.bottomMargin = dp(12);
+        root.addView(tvInfo, infLp);
+
+        AlertDialog dialog = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("حزمة البلاغ جاهزة للإرسال ✓")
+                .setView(root)
+                .create();
+
+        // زر 1: مشاركة النص + الصور المرفقة مباشرة عبر مشاركة النظام (Instagram / تطبيقات التواصل)
+        if (!payload.attachmentFiles.isEmpty()) {
+            LinearLayout btnShareAll = makeIconButton(
+                    "مشاركة البلاغ مع الصور (" + payload.attachmentFiles.size() + ")",
+                    R.drawable.ic_photo_attach,
+                    Color.parseColor("#0E2233"),
+                    Color.parseColor("#E0F2FE"),
+                    Color.parseColor("#38BDF8"),
+                    12.5f
+            );
+            btnShareAll.setOnClickListener(v -> {
+                copyReportToClipboard(shareText, false);
+                shareFeedbackWithImages(payload, shareText);
+            });
+            LinearLayout.LayoutParams shLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+            shLp.bottomMargin = dp(8);
+            root.addView(btnShareAll, shLp);
+        }
+
+        // زر 2: فتح حساب @R.D.AV على Instagram مباشرة للصق وإرسال البلاغ
+        LinearLayout btnIgDirect = makeInstagramPill("فتح حساب R.D.AV على Instagram وإرسال البلاغ", 12.2f, 16, 12, 11);
+        btnIgDirect.setOnClickListener(v -> {
+            copyReportToClipboard(shareText, false);
+            openInstagramSupport();
+        });
+        LinearLayout.LayoutParams igLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        igLp.bottomMargin = dp(8);
+        root.addView(btnIgDirect, igLp);
+
+        Button btnClose = makeButton("إغلاق", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_MUTED, LauncherConfig.COL_BORDER, true);
+        btnClose.setTextSize(12f);
+        btnClose.setOnClickListener(v -> dialog.dismiss());
+        root.addView(btnClose, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40)));
+
+        dialog.show();
+    }
+
+    private void shareFeedbackWithImages(FeedbackPayload payload, String shareText) {
+        try {
+            ArrayList<Uri> uris = new ArrayList<>();
+            for (File f : payload.attachmentFiles) {
+                if (f != null && f.isFile()) {
+                    uris.add(FeedbackAttachmentProvider.buildUriForFile(this, f));
+                }
+            }
+            if (uris.isEmpty()) {
+                openInstagramSupport();
+                return;
+            }
+            Intent shareIntent;
+            if (uris.size() == 1) {
+                shareIntent = new Intent(Intent.ACTION_SEND);
+                shareIntent.setType("image/jpeg");
+                shareIntent.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+            } else {
+                shareIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+                shareIntent.setType("image/jpeg");
+                shareIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            }
+            shareIntent.putExtra(Intent.EXTRA_TEXT, shareText);
+            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(shareIntent, "إرسال البلاغ والصور إلى R.D.AV"));
+        } catch (Throwable t) {
+            Toast.makeText(this, "تم نسخ النص — يمكنك إرفاق الصور مباشرة في Instagram.", Toast.LENGTH_LONG).show();
+            openInstagramSupport();
+        }
+    }
+
     private void openUrl(String url) {
         if (url == null || url.trim().isEmpty()) {
             return;
@@ -3521,6 +4216,10 @@ public class MainActivity extends Activity {
             }
             btnRestore.setEnabled(!busy);
             btnRestore.setAlpha(alpha);
+            if (btnFeedback != null) {
+                btnFeedback.setEnabled(!busy);
+                btnFeedback.setAlpha(alpha);
+            }
             btnGrantAccess.setEnabled(!busy);
             btnCheckUpdate.setEnabled(!busy);
             btnLaunchGame.setEnabled(!busy);

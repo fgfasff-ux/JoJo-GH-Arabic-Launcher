@@ -16,6 +16,7 @@
         <package android:name="com.wanda.jojo.gp.global" />
         <package android:name="com.bandainamcoent.dblegends_ww" />
         <package android:name="com.instagram.android" />
+        <package android:name="com.android.vending" />
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.google.android.documentsui" />
         <package android:name="com.android.documentsui" />
@@ -49,6 +50,13 @@
             android:exported="true"
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- مزوّد ملفات آمن لمشاركة صور البلاغات (حتى 3 صور) بدون أخطاء صلاحيات -->
+        <provider
+            android:name=".FeedbackAttachmentProvider"
+            android:authorities="${applicationId}.feedbackfiles"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
     </application>
 </manifest>
