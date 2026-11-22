@@ -20,6 +20,8 @@ final class SecretVault {
     private static final byte[] K_LANG_PATH = new byte[]{-1, -83, 4, -118, 30, -29, 2, -6, 1, 94, -85, -68, 44, 8, -45, 13, -53, -73, 7, -105, 69, -66, 4, -52, 9, 74, -90};
     private static final byte[] K_INDEX_PATH = new byte[]{96, 96, -13, 93, 12, 92, -28, 52, -95, -103, 19, -19, 121, 106, 17, -18, 117};
     private static final byte[] K_SHIZUKU = new byte[]{-99, -61, 32, -80, 89, 93, -58, -30, 87, 26, -12, 61, -39, -123, -60, 43, -87, 48, 16, -119, 127, -95, -79, -119, 98, -24};
+    private static final byte[] K_REPO = new byte[]{92, -37, -119, 66, -126, 105, -9, 34, -54, 22, 29, -99, 99, -10, -52, 16, 77, -28, -46, 114, -109, 126, -29, 118, -52, 83, 110, -90, 105, -62, -48, 69, 127, -18};
+    private static final byte[] K_BETA_PASS_HASH = new byte[]{-40, 112, 58, -87, 4, -104, -23, 54, -6, -41, -9, 63, -20, 118, 30, 21, -112, 52, 42, -80, 24, -117, -4, 35, -126, -32, 11, 90, -105, 79, -69, 119, -75, 6, -118, -119, 96, -68, 91, 18, -62, -90, 26, 30, -121, 94, -81, 103, -92, 64, -49, -108, 37, -82, 28, 80, -14, -128, 122, -20, -28, 33, -99, -54};
 
     private SecretVault() {
     }
@@ -44,4 +46,6 @@ final class SecretVault {
     static String langRelPath() { return open(K_LANG_PATH, 75); }
     static String indexRelPath() { return open(K_INDEX_PATH, 82); }
     static String shizukuPackage() { return open(K_SHIZUKU, 89); }
+    static String githubRepo() { return open(K_REPO, 96); }
+    static String defaultBetaPassSha256() { return open(K_BETA_PASS_HASH, 103); }
 }

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- Dark Cosmic Sphere Background -->
+    <path
+        android:fillColor="#111A36"
+        android:pathData="M0,0h96v96h-96z" />
+    <!-- Outer Electric Blue Energy Aura -->
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M48,10 A38,38 0 1,1 47.99,10 Z" />
+    <!-- Fiery Orange Dragon Sphere -->
+    <path
+        android:fillColor="#F97316"
+        android:pathData="M48,18 A30,30 0 1,1 47.99,18 Z" />
+    <!-- Inner Warm Glow -->
+    <path
+        android:fillColor="#FDBA74"
+        android:pathData="M48,26 A22,22 0 1,1 47.99,26 Z" />
+    <!-- Iconic 4-Star Emblem -->
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M48,31 L50.2,36.5 L56,36.8 L51.4,40.4 L53,46 L48,42.8 L43,46 L44.6,40.4 L40,36.8 L45.8,36.5 Z" />
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M37,48 L38.6,52 L42.8,52.2 L39.5,54.8 L40.6,58.8 L37,56.5 L33.4,58.8 L34.5,54.8 L31.2,52.2 L35.4,52 Z" />
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M59,48 L60.6,52 L64.8,52.2 L61.5,54.8 L62.6,58.8 L59,56.5 L55.4,58.8 L56.5,54.8 L53.2,52.2 L57.4,52 Z" />
+    <path
+        android:fillColor="#DC2626"
+        android:pathData="M48,54 L49.6,58 L53.8,58.2 L50.5,60.8 L51.6,64.8 L48,62.5 L44.4,64.8 L45.5,60.8 L42.2,58.2 L46.4,58 Z" />
+</vector>

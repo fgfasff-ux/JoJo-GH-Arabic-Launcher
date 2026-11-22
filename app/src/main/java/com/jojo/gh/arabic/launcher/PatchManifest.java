@@ -20,6 +20,7 @@ public final class PatchManifest {
     public final String sha256;
     public final long sizeBytes;
     public final String targetSubpath;
+    public final String channel;
 
     public PatchManifest(
             String patchVersion,
@@ -35,6 +36,29 @@ public final class PatchManifest {
             long sizeBytes,
             String targetSubpath
     ) {
+        this(
+                patchVersion, gameVersion, targetGameVersionCode,
+                expectedLangOrigMd5, expectedLangOrigSize, expectedForceConfSize,
+                releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
+                "public"
+        );
+    }
+
+    public PatchManifest(
+            String patchVersion,
+            String gameVersion,
+            long targetGameVersionCode,
+            String expectedLangOrigMd5,
+            long expectedLangOrigSize,
+            long expectedForceConfSize,
+            String releaseDate,
+            String changelog,
+            String downloadUrl,
+            String sha256,
+            long sizeBytes,
+            String targetSubpath,
+            String channel
+    ) {
         this.patchVersion = patchVersion != null ? patchVersion.trim() : "1.0.0";
         this.gameVersion = gameVersion != null ? gameVersion.trim() : LauncherConfig.TARGET_GAME_VERSION_NAME;
         this.targetGameVersionCode = targetGameVersionCode > 0 ? targetGameVersionCode : LauncherConfig.TARGET_GAME_VERSION_CODE;
@@ -49,6 +73,11 @@ public final class PatchManifest {
         this.sha256 = sha256 != null ? sha256.trim().toLowerCase() : "";
         this.sizeBytes = Math.max(0L, sizeBytes);
         this.targetSubpath = LauncherConfig.normalizeSubpath(targetSubpath);
+        this.channel = (channel != null && !channel.trim().isEmpty()) ? channel.trim().toLowerCase() : "public";
+    }
+
+    public boolean isBetaChannel() {
+        return "beta".equalsIgnoreCase(channel);
     }
 
     public static PatchManifest fromJson(String jsonText) throws Exception {
@@ -69,7 +98,8 @@ public final class PatchManifest {
                 downloadUrl,
                 obj.optString("sha256", ""),
                 obj.optLong("size_bytes", 0L),
-                obj.optString("target_subpath", "")
+                obj.optString("target_subpath", ""),
+                obj.optString("channel", "public")
         );
     }
 

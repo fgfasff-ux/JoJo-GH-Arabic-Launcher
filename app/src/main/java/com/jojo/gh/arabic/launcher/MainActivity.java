@@ -25,12 +25,14 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -49,6 +51,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -86,6 +89,7 @@ public class MainActivity extends Activity {
     private enum PendingAction {
         NONE,
         ONLINE_INSTALL,
+        BETA_INSTALL,
         LOCAL_ZIP_INSTALL,
         RESTORE
     }
@@ -113,8 +117,24 @@ public class MainActivity extends Activity {
     private volatile PatchManifest latestRemoteManifest = null;
     private volatile String installedPatchVersion = "";
     private volatile boolean isPatchCurrentlyInstalled = false;
+    private volatile boolean lastSafetyOk = true;
     private volatile boolean safetyAlertShownThisSession = false;
     private String bridgeAuthToken = "";
+
+    // نظام الألعاب المتعددة (R.D.AV Multi-Game Hub) + وضع Beta السري
+    private GameProfile activeProfile = GameProfileRegistry.getDefaultProfile();
+    private boolean isOnGameHub = false;
+    private FrameLayout rootHost;
+    private View homeScreenView;
+    private View gameHubScreenView;
+    private LinearLayout homeCardsGrid;
+    private LinearLayout homeBetaBanner;
+    private LinearLayout hubBetaBanner;
+    private TextView btnBackToLibrary;
+    private TextView tvStrategyBadge;
+    private Button btnInstallBeta;
+    private int secretTapCount = 0;
+    private long lastSecretTapMs = 0L;
 
     // مشغّل الفيديو المحلي الخفيف (TextureView + MediaPlayer)
     private static final float PROMO_FADE_DURATION_MS = 5000f;
@@ -231,11 +251,12 @@ public class MainActivity extends Activity {
         } catch (Throwable ignored) {
         }
 
-        setContentView(buildUi());
+        setContentView(buildRootContainer());
+        syncBetaModeUi();
         ensureLegacyStoragePermissions();
         refreshStatusAsync(null);
 
-        if (LauncherConfig.isOnlineUrlConfigured()) {
+        if (activeProfile.hasOnlineConfig()) {
             checkOnlineUpdateAsync(false);
         }
     }
@@ -243,7 +264,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        resumePromoVideo();
+        if (isOnGameHub) {
+            resumePromoVideo();
+        }
+        syncBetaModeUi();
         SafHelper.cleanupInvalidTreePermissions(this);
         if (!isBusy) {
             refreshStatusAsync(() -> {
@@ -255,6 +279,19 @@ public class MainActivity extends Activity {
                 }
             });
         }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (isOnGameHub) {
+            if (isBusy) {
+                Toast.makeText(this, "يرجى الانتظار حتى انتهاء العملية الحالية...", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            showHomeLibrary();
+            return;
+        }
+        super.onBackPressed();
     }
 
     @Override
@@ -358,14 +395,16 @@ public class MainActivity extends Activity {
                 try {
                     player.setVolume(0f, 0f);
                     player.seekTo(0);
-                    player.start();
-                    startPromoFadeTicker();
+                    if (isOnGameHub) {
+                        player.start();
+                        startPromoFadeTicker();
+                    }
                 } catch (Throwable ignored) {
                 }
             });
             mp.setOnCompletionListener(player -> {
                 try {
-                    if (promoPlayer == player && promoPrepared) {
+                    if (promoPlayer == player && promoPrepared && isOnGameHub) {
                         player.setVolume(0f, 0f);
                         player.seekTo(0);
                         player.start();
@@ -489,7 +528,494 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================================
-    // بناء الواجهة البرمجية الفخمة (Dark Gaming UI — Golden Wind / تعريب R.D.AV)
+    // هيكل الشاشتين: (1) مكتبة الألعاب الرئيسية  <->  (2) صفحة تفاصيل اللعبة (Game Hub)
+    // =========================================================================
+
+    private View buildRootContainer() {
+        rootHost = new FrameLayout(this);
+        GradientDrawable pageBg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{LauncherConfig.COL_BG, LauncherConfig.COL_BG_BOTTOM, LauncherConfig.COL_BG}
+        );
+        rootHost.setBackground(pageBg);
+
+        homeScreenView = buildHomeLibraryUi();
+        gameHubScreenView = buildUi();
+        gameHubScreenView.setVisibility(View.GONE);
+
+        rootHost.addView(homeScreenView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        rootHost.addView(gameHubScreenView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        isOnGameHub = false;
+        refreshHomeCards();
+        return rootHost;
+    }
+
+    private LinearLayout makeBetaStatusBanner() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(12), dp(8), dp(12), dp(8));
+        GradientDrawable bg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#3B0764"), Color.parseColor("#6B21A8"), Color.parseColor("#4C1D95")}
+        );
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), Color.parseColor("#D8B4FE"));
+        bar.setBackground(bg);
+
+        TextView tvLabel = makeText("🧪 وضع اختبار التعريب (Beta Channel) مُفعّل", 11f, Color.WHITE, true);
+        bar.addView(tvLabel, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView btnChangePass = makeText("كلمة المرور", 10f, LauncherConfig.COL_GOLD, true);
+        btnChangePass.setPadding(dp(8), dp(4), dp(8), dp(4));
+        GradientDrawable cpBg = new GradientDrawable();
+        cpBg.setColor(Color.parseColor("#2A0B4D"));
+        cpBg.setCornerRadius(dp(8));
+        cpBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
+        btnChangePass.setBackground(cpBg);
+        btnChangePass.setOnClickListener(v -> showChangeBetaPasswordDialog());
+        LinearLayout.LayoutParams cpLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cpLp.rightMargin = dp(6);
+        bar.addView(btnChangePass, cpLp);
+
+        TextView btnCloseBeta = makeText("إغلاق", 10f, Color.WHITE, true);
+        btnCloseBeta.setPadding(dp(9), dp(4), dp(9), dp(4));
+        GradientDrawable cbBg = new GradientDrawable();
+        cbBg.setColor(Color.parseColor("#7F1D3A"));
+        cbBg.setCornerRadius(dp(8));
+        cbBg.setStroke(dp(1), LauncherConfig.COL_DANGER);
+        btnCloseBeta.setBackground(cbBg);
+        btnCloseBeta.setOnClickListener(v -> {
+            BetaModeManager.setBetaEnabled(this, false);
+            syncBetaModeUi();
+            Toast.makeText(this, "تم إغلاق وضع اختبار التعريب السري (Beta).", Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams cbLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cbLp.rightMargin = dp(6);
+        bar.addView(btnCloseBeta, cbLp);
+
+        bar.setVisibility(View.GONE);
+        return bar;
+    }
+
+    private void syncBetaModeUi() {
+        boolean enabled = BetaModeManager.isBetaEnabled(this);
+        int vis = enabled ? View.VISIBLE : View.GONE;
+        if (homeBetaBanner != null) {
+            homeBetaBanner.setVisibility(vis);
+        }
+        if (hubBetaBanner != null) {
+            hubBetaBanner.setVisibility(vis);
+        }
+        if (btnInstallBeta != null) {
+            btnInstallBeta.setVisibility(vis);
+        }
+    }
+
+    private void handleSecretBrandTap() {
+        long now = System.currentTimeMillis();
+        if (now - lastSecretTapMs > 2500L) {
+            secretTapCount = 0;
+        }
+        lastSecretTapMs = now;
+        secretTapCount++;
+        if (secretTapCount >= 5) {
+            secretTapCount = 0;
+            showBetaPasswordDialog();
+        }
+    }
+
+    private void showBetaPasswordDialog() {
+        if (BetaModeManager.isBetaEnabled(this)) {
+            showChangeBetaPasswordDialog();
+            return;
+        }
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(dp(20), dp(12), dp(20), dp(4));
+
+        TextView hint = makeText("أدخل كلمة مرور المطور لتفعيل قناة اختبار التعريب السرية (Beta Channel):", 12f, LauncherConfig.COL_MUTED, false);
+        hint.setPadding(0, 0, 0, dp(10));
+        container.addView(hint);
+
+        EditText etPass = new EditText(this);
+        etPass.setHint("كلمة مرور المطور");
+        etPass.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        etPass.setTextColor(LauncherConfig.COL_TEXT);
+        etPass.setHintTextColor(LauncherConfig.COL_MUTED);
+        etPass.setPadding(dp(12), dp(10), dp(12), dp(10));
+        GradientDrawable etBg = new GradientDrawable();
+        etBg.setColor(LauncherConfig.COL_CARD_INNER);
+        etBg.setCornerRadius(dp(10));
+        etBg.setStroke(dp(1), LauncherConfig.COL_PURPLE);
+        etPass.setBackground(etBg);
+        container.addView(etPass);
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+        b.setTitle("🧪 بوابة المطور السرية — R.D.AV");
+        b.setView(container);
+        b.setPositiveButton("تفعيل Beta", (d, w) -> {
+            String entered = etPass.getText() != null ? etPass.getText().toString() : "";
+            if (BetaModeManager.verifyPassword(this, entered)) {
+                BetaModeManager.setBetaEnabled(this, true);
+                syncBetaModeUi();
+                Toast.makeText(this, "🧪 تم تفعيل وضع اختبار التعريب (Beta Channel) بنجاح ✓", Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, "كلمة المرور غير صحيحة.", Toast.LENGTH_SHORT).show();
+            }
+        });
+        b.setNegativeButton("إلغاء", null);
+        b.show();
+    }
+
+    private void showChangeBetaPasswordDialog() {
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(dp(20), dp(12), dp(20), dp(4));
+
+        EditText etCur = new EditText(this);
+        etCur.setHint("كلمة المرور الحالية");
+        etCur.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        etCur.setTextColor(LauncherConfig.COL_TEXT);
+        etCur.setHintTextColor(LauncherConfig.COL_MUTED);
+        container.addView(etCur);
+
+        EditText etNew = new EditText(this);
+        etNew.setHint("كلمة المرور الجديدة (4 أحرف على الأقل)");
+        etNew.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        etNew.setTextColor(LauncherConfig.COL_TEXT);
+        etNew.setHintTextColor(LauncherConfig.COL_MUTED);
+        LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        nlp.topMargin = dp(10);
+        container.addView(etNew, nlp);
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+        b.setTitle("تغيير كلمة مرور وضع الاختبار");
+        b.setView(container);
+        b.setPositiveButton("حفظ (SHA-256)", (d, w) -> {
+            String cur = etCur.getText() != null ? etCur.getText().toString() : "";
+            String nw = etNew.getText() != null ? etNew.getText().toString() : "";
+            if (BetaModeManager.changePassword(this, cur, nw)) {
+                Toast.makeText(this, "تم تحديث كلمة مرور المطور وتشفيرها بـ SHA-256 ✓", Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, "كلمة المرور الحالية خاطئة أو الجديدة أقصر من 4 أحرف.", Toast.LENGTH_SHORT).show();
+            }
+        });
+        b.setNegativeButton("إلغاء", null);
+        b.show();
+    }
+
+    private View buildHomeLibraryUi() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(14), dp(14), dp(14), dp(22));
+        scroll.addView(root, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT));
+
+        // شريط وضع الاختبار السري (مخفي افتراضياً)
+        homeBetaBanner = makeBetaStatusBanner();
+        LinearLayout.LayoutParams bbLp = makeCardLp();
+        root.addView(homeBetaBanner, bbLp);
+
+        // الترويسة العليا لمنصة الألعاب المتعددة مع البوابة السرية على شعار R.D.AV
+        LinearLayout studioCard = new LinearLayout(this);
+        studioCard.setOrientation(LinearLayout.VERTICAL);
+        studioCard.setPadding(dp(16), dp(16), dp(16), dp(14));
+        GradientDrawable sBg = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.parseColor("#241145"), LauncherConfig.COL_CARD, Color.parseColor("#140A26")}
+        );
+        sBg.setCornerRadius(dp(18));
+        sBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        studioCard.setBackground(sBg);
+
+        LinearLayout brandRow = new LinearLayout(this);
+        brandRow.setOrientation(LinearLayout.HORIZONTAL);
+        brandRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        // شعار R.D.AV — الضغط 5 مرات متتالية أو الضغط المطوّل يفتح بوابة Beta السرية!
+        TextView tvSecretLogo = makeText("R.D.AV", 15f, Color.parseColor("#0D061A"), true);
+        tvSecretLogo.setGravity(Gravity.CENTER);
+        tvSecretLogo.setPadding(dp(12), dp(8), dp(12), dp(8));
+        GradientDrawable logoBg = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{LauncherConfig.COL_GOLD, LauncherConfig.COL_ACCENT}
+        );
+        logoBg.setCornerRadius(dp(13));
+        logoBg.setStroke(dp(1), Color.parseColor("#FEF08A"));
+        tvSecretLogo.setBackground(logoBg);
+        tvSecretLogo.setClickable(true);
+        tvSecretLogo.setLongClickable(true);
+        tvSecretLogo.setOnClickListener(v -> handleSecretBrandTap());
+        tvSecretLogo.setOnLongClickListener(v -> {
+            showBetaPasswordDialog();
+            return true;
+        });
+        LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        logoLp.leftMargin = dp(12);
+        brandRow.addView(tvSecretLogo, logoLp);
+
+        LinearLayout titleCol = new LinearLayout(this);
+        titleCol.setOrientation(LinearLayout.VERTICAL);
+        titleCol.addView(makeText(LauncherConfig.HUB_TITLE, 17f, LauncherConfig.COL_GOLD, true));
+        TextView tvSub = makeText(LauncherConfig.HUB_SUBTITLE, 11f, LauncherConfig.COL_MUTED, false);
+        tvSub.setPadding(0, dp(2), 0, 0);
+        titleCol.addView(tvSub);
+        brandRow.addView(titleCol, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        studioCard.addView(brandRow);
+
+        LinearLayout topPills = new LinearLayout(this);
+        topPills.setOrientation(LinearLayout.HORIZONTAL);
+        topPills.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams tpLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        tpLp.topMargin = dp(12);
+
+        TextView hubVer = makeText("Multi-Game Hub • v" + LauncherConfig.APP_VERSION, 10.5f, LauncherConfig.COL_CYAN, true);
+        hubVer.setPadding(dp(10), dp(5), dp(10), dp(5));
+        GradientDrawable hvBg = new GradientDrawable();
+        hvBg.setColor(Color.parseColor("#1D1138"));
+        hvBg.setCornerRadius(dp(10));
+        hvBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+        hubVer.setBackground(hvBg);
+        LinearLayout.LayoutParams hvLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        hvLp.leftMargin = dp(8);
+        topPills.addView(hubVer, hvLp);
+
+        TextView igHome = makeText("Instagram: " + LauncherConfig.INSTAGRAM_HANDLE + " ↗", 10.5f, Color.WHITE, true);
+        igHome.setPadding(dp(12), dp(5), dp(12), dp(5));
+        GradientDrawable igBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#7C2D8C"), Color.parseColor("#C13584"), Color.parseColor("#D97706")}
+        );
+        igBg.setCornerRadius(dp(10));
+        igBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
+        igHome.setBackground(igBg);
+        igHome.setOnClickListener(v -> openUrl(LauncherConfig.INSTAGRAM_URL));
+        topPills.addView(igHome);
+
+        studioCard.addView(topPills, tpLp);
+        root.addView(studioCard, makeCardLp());
+
+        // عنوان القسم
+        TextView secTitle = makeText("مكتبة الألعاب المتوفرة", 14.5f, LauncherConfig.COL_TEXT, true);
+        secTitle.setPadding(dp(4), dp(4), dp(4), dp(10));
+        root.addView(secTitle);
+
+        // شبكة بطاقات الألعاب (عمودان)
+        homeCardsGrid = new LinearLayout(this);
+        homeCardsGrid.setOrientation(LinearLayout.VERTICAL);
+        root.addView(homeCardsGrid, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        // تذييل مكتبة الألعاب
+        TextView homeFooter = makeText(LauncherConfig.FOOTER_TEXT, 10.5f, LauncherConfig.COL_MUTED, false);
+        homeFooter.setGravity(Gravity.CENTER);
+        homeFooter.setPadding(0, dp(14), 0, dp(8));
+        root.addView(homeFooter);
+
+        return scroll;
+    }
+
+    private void refreshHomeCards() {
+        if (homeCardsGrid == null) {
+            return;
+        }
+        homeCardsGrid.removeAllViews();
+        List<GameProfile> profiles = GameProfileRegistry.getAllProfiles();
+        for (int i = 0; i < profiles.size(); i += 2) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            rowLp.bottomMargin = dp(12);
+
+            View card1 = createHomeGameCard(profiles.get(i));
+            LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+            lp1.leftMargin = dp(5);
+            row.addView(card1, lp1);
+
+            if (i + 1 < profiles.size()) {
+                View card2 = createHomeGameCard(profiles.get(i + 1));
+                LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+                lp2.rightMargin = dp(5);
+                row.addView(card2, lp2);
+            } else {
+                View spacer = new View(this);
+                LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, 1, 1f);
+                spLp.rightMargin = dp(5);
+                row.addView(spacer, spLp);
+            }
+            homeCardsGrid.addView(row, rowLp);
+        }
+    }
+
+    private View createHomeGameCard(GameProfile profile) {
+        boolean installed = isPackageInstalled(profile.packageName);
+        String statusText;
+        int statusBg;
+        int statusFg;
+
+        if (profile.comingSoon) {
+            statusText = "قريباً";
+            statusBg = Color.parseColor("#3B1F0B");
+            statusFg = Color.parseColor("#FDBA74");
+        } else if (!installed) {
+            statusText = "اللعبة غير مثبتة";
+            statusBg = Color.parseColor("#3D1222");
+            statusFg = LauncherConfig.COL_DANGER;
+        } else if (profile.id.equals(activeProfile.id) && !lastSafetyOk) {
+            statusText = "يتوفر تحديث";
+            statusBg = Color.parseColor("#3D1222");
+            statusFg = LauncherConfig.COL_DANGER;
+        } else if (profile.id.equals(activeProfile.id) && isPatchCurrentlyInstalled) {
+            boolean hasRemoteUpdate = latestRemoteManifest != null
+                    && !installedPatchVersion.isEmpty()
+                    && !installedPatchVersion.equals(latestRemoteManifest.patchVersion);
+            if (hasRemoteUpdate) {
+                statusText = "يتوفر تحديث";
+                statusBg = Color.parseColor("#3D2A0D");
+                statusFg = LauncherConfig.COL_GOLD;
+            } else {
+                statusText = "مُحدَّث ✓";
+                statusBg = Color.parseColor("#113826");
+                statusFg = LauncherConfig.COL_SUCCESS;
+            }
+        } else {
+            statusText = "جاهز للتعريب";
+            statusBg = Color.parseColor("#22153D");
+            statusFg = LauncherConfig.COL_CYAN;
+        }
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setPadding(dp(12), dp(14), dp(12), dp(14));
+        GradientDrawable cBg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.parseColor("#1B1233"), LauncherConfig.COL_CARD}
+        );
+        cBg.setCornerRadius(dp(18));
+        cBg.setStroke(dp(1), profile.comingSoon ? LauncherConfig.COL_BORDER : profile.accentColor);
+        card.setBackground(cBg);
+        card.setClickable(true);
+
+        // أيقونة / غلاف اللعبة بإطار دائري بلون هوية اللعبة
+        FrameLayout iconBox = new FrameLayout(this);
+        GradientDrawable iFrame = new GradientDrawable();
+        iFrame.setCornerRadius(dp(18));
+        iFrame.setStroke(dp(2), profile.accentColor);
+        iFrame.setColor(LauncherConfig.COL_CARD_INNER);
+        iconBox.setBackground(iFrame);
+        iconBox.setPadding(dp(2), dp(2), dp(2), dp(2));
+
+        ImageView iv = new ImageView(this);
+        iv.setImageResource(profile.iconRes);
+        iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        clipRounded(iv, dp(16));
+        iconBox.addView(iv, new FrameLayout.LayoutParams(dp(84), dp(84)));
+        card.addView(iconBox, new LinearLayout.LayoutParams(dp(88), dp(88)));
+
+        // شارة الحالة
+        TextView tvStatus = makeText(statusText, 10.5f, statusFg, true);
+        tvStatus.setGravity(Gravity.CENTER);
+        tvStatus.setPadding(dp(10), dp(4), dp(10), dp(4));
+        GradientDrawable stBg = new GradientDrawable();
+        stBg.setColor(statusBg);
+        stBg.setCornerRadius(dp(10));
+        stBg.setStroke(dp(1), statusFg);
+        tvStatus.setBackground(stBg);
+        LinearLayout.LayoutParams stLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        stLp.topMargin = dp(10);
+        card.addView(tvStatus, stLp);
+
+        // اسم اللعبة
+        TextView tvTitle = makeText(profile.title, 12.5f, LauncherConfig.COL_TEXT, true);
+        tvTitle.setGravity(Gravity.CENTER);
+        tvTitle.setPadding(0, dp(8), 0, dp(2));
+        card.addView(tvTitle);
+
+        TextView tvAr = makeText(profile.arabicTitle, 11f, profile.accentColor, true);
+        tvAr.setGravity(Gravity.CENTER);
+        card.addView(tvAr);
+
+        // رقم الإصدار واللعبة
+        String verLine = profile.comingSoon
+                ? "محرك: " + profile.patchStrategy.code
+                : ("تعريب " + profile.patchVersionLabel + " • لعبة v" + profile.targetGameVersionName);
+        TextView tvVer = makeText(verLine, 9.8f, LauncherConfig.COL_MUTED, false);
+        tvVer.setGravity(Gravity.CENTER);
+        tvVer.setPadding(0, dp(6), 0, 0);
+        card.addView(tvVer);
+
+        card.setOnClickListener(v -> {
+            if (profile.comingSoon) {
+                AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+                b.setTitle(profile.title + " — قريباً");
+                b.setMessage(
+                        "تم تجهيز بنية «" + profile.patchStrategy.code + "» داخل منصة R.D.AV Multi-Game Hub لدعم تعريب "
+                                + profile.title + " والألعاب القياسية مستقبلاً بنسخ احتياطي تلقائي.\n\n"
+                                + "تابع حسابنا على Instagram (" + LauncherConfig.INSTAGRAM_HANDLE + ") لموعد الإطلاق!"
+                );
+                b.setPositiveButton("حسناً", null);
+                b.show();
+            } else {
+                openGameHub(profile);
+            }
+        });
+        return card;
+    }
+
+    private boolean isPackageInstalled(String pkg) {
+        if (pkg == null || pkg.trim().isEmpty()) {
+            return false;
+        }
+        try {
+            getPackageManager().getPackageInfo(pkg, 0);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private void openGameHub(GameProfile profile) {
+        activeProfile = profile;
+        isOnGameHub = true;
+        if (tvStrategyBadge != null) {
+            tvStrategyBadge.setText("محرك: " + profile.patchStrategy.code);
+        }
+        homeScreenView.setVisibility(View.GONE);
+        gameHubScreenView.setVisibility(View.VISIBLE);
+        syncBetaModeUi();
+        resumePromoVideo();
+        refreshStatusAsync(null);
+    }
+
+    private void showHomeLibrary() {
+        isOnGameHub = false;
+        mainHandler.removeCallbacks(hidePromoAudioRunnable);
+        mainHandler.removeCallbacks(promoFadeRunnable);
+        pausePromoVideo();
+        gameHubScreenView.setVisibility(View.GONE);
+        homeScreenView.setVisibility(View.VISIBLE);
+        syncBetaModeUi();
+        refreshHomeCards();
+    }
+
+    // =========================================================================
+    // بناء شاشة تفاصيل اللعبة (Game Hub — التصميم الفخم الكامل للعبة JoJo)
     // =========================================================================
 
     private View buildUi() {
@@ -508,6 +1034,47 @@ public class MainActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
         ));
+
+        // 0) شريط وضع الاختبار السري في صفحة التفاصيل (مخفي افتراضياً)
+        hubBetaBanner = makeBetaStatusBanner();
+        root.addView(hubBetaBanner, makeCardLp());
+
+        // 0.5) شريط الرجوع إلى مكتبة الألعاب + شارة محرك الحقن النشط
+        LinearLayout backRow = new LinearLayout(this);
+        backRow.setOrientation(LinearLayout.HORIZONTAL);
+        backRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams backRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        backRowLp.bottomMargin = dp(10);
+
+        btnBackToLibrary = makeText("←  مكتبة الألعاب", 12f, LauncherConfig.COL_GOLD, true);
+        btnBackToLibrary.setPadding(dp(14), dp(7), dp(14), dp(7));
+        GradientDrawable backBg = new GradientDrawable();
+        backBg.setColor(Color.parseColor("#1A1033"));
+        backBg.setCornerRadius(dp(12));
+        backBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        btnBackToLibrary.setBackground(backBg);
+        btnBackToLibrary.setClickable(true);
+        btnBackToLibrary.setOnClickListener(v -> {
+            if (!isBusy) {
+                showHomeLibrary();
+            }
+        });
+        backRow.addView(btnBackToLibrary);
+
+        View flexSpacer = new View(this);
+        backRow.addView(flexSpacer, new LinearLayout.LayoutParams(0, 1, 1f));
+
+        tvStrategyBadge = makeText("محرك: " + activeProfile.patchStrategy.code, 10f, LauncherConfig.COL_CYAN, true);
+        tvStrategyBadge.setPadding(dp(10), dp(5), dp(10), dp(5));
+        GradientDrawable stratBg = new GradientDrawable();
+        stratBg.setColor(Color.parseColor("#160D2B"));
+        stratBg.setCornerRadius(dp(10));
+        stratBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+        tvStrategyBadge.setBackground(stratBg);
+        backRow.addView(tvStrategyBadge);
+
+        root.addView(backRow, backRowLp);
 
         // ---------------------------------------------------------------------
         // 1) الترويسة العليا: شعار اللعبة + «تعريب R.D.AV» + شارة إنستقرام
@@ -756,6 +1323,26 @@ public class MainActivity extends Activity {
         // ---------------------------------------------------------------------
         // 4) أزرار التحكم الرئيسية (الترتيب الفخم المستوحى من التصميم المرجعي)
         // ---------------------------------------------------------------------
+
+        // 0. زر اختبار التعريب السري (يظهر فقط عند تفعيل وضع Beta بكلمة المرور!)
+        btnInstallBeta = new Button(this);
+        btnInstallBeta.setText("🧪  تحميل وتثبيت نسخة الاختبار (Beta Test)");
+        btnInstallBeta.setAllCaps(false);
+        btnInstallBeta.setTextSize(14f);
+        btnInstallBeta.setTextColor(Color.WHITE);
+        btnInstallBeta.setTypeface(fontBold);
+        GradientDrawable betaBtnBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#581C87"), Color.parseColor("#9333EA"), Color.parseColor("#7E22CE")}
+        );
+        betaBtnBg.setCornerRadius(dp(14));
+        betaBtnBg.setStroke(dp(1), Color.parseColor("#E9D5FF"));
+        btnInstallBeta.setBackground(betaBtnBg);
+        btnInstallBeta.setVisibility(View.GONE);
+        btnInstallBeta.setOnClickListener(v -> startBetaInstallFlow());
+        LinearLayout.LayoutParams betaLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(50));
+        betaLp.bottomMargin = dp(9);
+        root.addView(btnInstallBeta, betaLp);
 
         // 1. الزر الرئيسي البارز: ▶ تشغيل اللعبة (تدرج ذهبي -> بنفسجي مضيء)
         btnLaunchGame = new Button(this);
@@ -1556,7 +2143,9 @@ public class MainActivity extends Activity {
                     setBadgeStyle(tvPatchBadge, Color.parseColor("#22153D"), LauncherConfig.COL_CYAN);
                 }
 
+                lastSafetyOk = fSafety.safe;
                 updateRemoteCardUi();
+                refreshHomeCards();
                 if (afterUiUpdate != null) {
                     afterUiUpdate.run();
                 }
@@ -1586,6 +2175,8 @@ public class MainActivity extends Activity {
             mainHandler.post(() -> {
                 if (action == PendingAction.ONLINE_INSTALL) {
                     startOnlineInstallFlow();
+                } else if (action == PendingAction.BETA_INSTALL) {
+                    startBetaInstallFlow();
                 } else if (action == PendingAction.LOCAL_ZIP_INSTALL && localUri != null) {
                     startLocalZipInstallFlow(localUri);
                 } else if (action == PendingAction.RESTORE) {
@@ -1773,7 +2364,7 @@ public class MainActivity extends Activity {
         }
         worker.execute(() -> {
             try {
-                PatchManifest manifest = PatchDownloader.fetchManifest();
+                PatchManifest manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
                 latestRemoteManifest = manifest;
                 mainHandler.post(this::updateRemoteCardUi);
             } catch (Throwable t) {
@@ -1808,6 +2399,7 @@ public class MainActivity extends Activity {
         }
         tvRemoteInfo.setText(sb.toString());
         tvRemoteInfo.setTextColor(LauncherConfig.COL_TEXT);
+        refreshHomeCards();
     }
 
     // =========================================================================
@@ -1844,7 +2436,7 @@ public class MainActivity extends Activity {
                 ShellBridgeServer.deleteRecursive(workDir);
                 stageDir.mkdirs();
 
-                PatchManifest manifest = PatchDownloader.fetchManifest();
+                PatchManifest manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
                 latestRemoteManifest = manifest;
                 mainHandler.post(this::updateRemoteCardUi);
 
@@ -1945,14 +2537,91 @@ public class MainActivity extends Activity {
         });
     }
 
+    /**
+     * تدفق تحميل وتثبيت نسخة الاختبار السرية (Beta Test — manifest_beta.json / GitHub Pre-release)
+     * عبر استراتيجية الحقن الخاصة باللعبة النشطة دون التأثير على قناة المستخدمين العاديين.
+     */
+    private void startBetaInstallFlow() {
+        if (isBusy) {
+            return;
+        }
+        if (!BetaModeManager.isBetaEnabled(this)) {
+            showBetaPasswordDialog();
+            return;
+        }
+        if (!isAnyGameInstalled()) {
+            Toast.makeText(this, "يرجى تثبيت لعبة " + activeProfile.title + " أولاً على الجهاز.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        worker.execute(() -> {
+            AccessMode mode = detectAccessMode();
+            if (!isReadyAccessMode(mode)) {
+                pendingAction = PendingAction.BETA_INSTALL;
+                mainHandler.post(this::requestBestAccessInteractive);
+                return;
+            }
+
+            setBusyUi(true, "🧪 جارٍ جلب أحدث نسخة اختبار (Beta Pre-release) من GitHub...", 6);
+            File workDir = new File(getHintDir(), "rdav_beta_patch_work");
+            File stageDir = new File(workDir, "stage");
+            File zipFile = new File(workDir, "beta_patch.zip");
+
+            try {
+                ShellBridgeServer.deleteRecursive(workDir);
+                stageDir.mkdirs();
+
+                PatchManifest betaManifest = PatchDownloader.fetchBetaManifest(activeProfile);
+                updateProgress(12, "🧪 تم العثور على نسخة الاختبار (" + betaManifest.patchVersion + ") — جارٍ التحميل...");
+
+                PatchDownloader.downloadToFile(
+                        betaManifest.downloadUrl,
+                        zipFile,
+                        betaManifest.sizeBytes,
+                        this::updateProgress,
+                        15,
+                        50
+                );
+
+                updateProgress(52, "🧪 جارٍ التحقق من بصمة SHA-256 لنسخة الاختبار...");
+                PatchDownloader.verifySha256IfProvided(zipFile, betaManifest.sha256);
+
+                PatchDownloader.extractZipFile(zipFile, stageDir, this::updateProgress, 55, 68);
+                File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
+
+                executeInstallFromStage(
+                        mode,
+                        effectiveStage,
+                        "beta-" + betaManifest.patchVersion,
+                        betaManifest.resolveEffectiveSubpath()
+                );
+                mainHandler.post(() -> Toast.makeText(
+                        this,
+                        "🧪 تم تثبيت نسخة الاختبار (" + betaManifest.patchVersion + ") بنجاح — يمكنك تجربة اللعبة الآن ✓",
+                        Toast.LENGTH_LONG
+                ).show());
+            } catch (Throwable t) {
+                showErrorState("تعذر تثبيت نسخة الاختبار (Beta): " + readableError(t));
+            } finally {
+                ShellBridgeServer.deleteRecursive(workDir);
+                setBusyUi(false, null, -1);
+                refreshStatusAsync(null);
+            }
+        });
+    }
+
     private void executeInstallFromStage(
             AccessMode mode,
             File stageDir,
             String patchVersion,
             String targetSubpath
     ) throws Exception {
+        // استدعاء محرك/استراتيجية الحقن الخاصة باللعبة المختارة دون أي تداخل
+        PatchStrategy strategy = activeProfile.patchStrategy;
+        strategy.validateStagedPayload(stageDir, activeProfile);
+
         ShellBridgeServer.ProgressListener listener = this::updateProgress;
-        String normSubpath = LauncherConfig.normalizeSubpath(targetSubpath);
+        String normSubpath = strategy.resolveDefaultTargetSubpath(targetSubpath);
         String result;
 
         if (mode == AccessMode.BRIDGE_ACTIVE) {
@@ -2181,6 +2850,12 @@ public class MainActivity extends Activity {
         mainHandler.post(() -> {
             btnInstallOnline.setEnabled(!busy);
             btnInstallLocalZip.setEnabled(!busy);
+            if (btnInstallBeta != null) {
+                btnInstallBeta.setEnabled(!busy);
+            }
+            if (btnBackToLibrary != null) {
+                btnBackToLibrary.setEnabled(!busy);
+            }
             if (btnDiagScan != null) {
                 btnDiagScan.setEnabled(!busy);
             }

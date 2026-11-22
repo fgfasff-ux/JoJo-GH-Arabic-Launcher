@@ -14,14 +14,16 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "1.2.0";
+    public static final String APP_VERSION = "2.0.0";
     public static final String BRAND_TITLE = "تعريب R.D.AV";
+    public static final String HUB_TITLE = "R.D.AV Multi-Game Hub";
+    public static final String HUB_SUBTITLE = "منصة تعريب الألعاب العربية الفصحى • متعدد الألعاب";
     public static final String APP_TITLE = "JoJo's Bizarre Adventure: Golden Hymn";
     public static final String APP_SUBTITLE = "الرياح الذهبية • تعريب عربي فصيح كامل مع حارس الأمان";
     public static final String BADGE_LABEL = "تعريب R.D.AV • v" + APP_VERSION;
     public static final String INSTAGRAM_HANDLE = "R.D.AV";
     public static final String INSTAGRAM_URL = SecretVault.instagramUrl();
-    public static final String FOOTER_TEXT = "تعريب R.D.AV • JoJo GH Arabic Launcher v" + APP_VERSION;
+    public static final String FOOTER_TEXT = "تعريب R.D.AV • Multi-Game Localization Hub v" + APP_VERSION;
 
     // إحصائيات المشروع الفعلية المعروضة في شريط الواجهة
     public static final String STAT_LINES = "15,967 نصاً معرّباً بالفصحى";

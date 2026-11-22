@@ -4,6 +4,9 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.Build;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -71,35 +74,47 @@ public final class PatchDownloader {
         throw new IOException("تجاوز الحد الأقصى لإعادة التوجيه للرابط");
     }
 
+    private static String downloadUtf8Text(String urlStr, int maxBytes) throws IOException {
+        HttpURLConnection conn = null;
+        try {
+            conn = openHttpsConnection(urlStr);
+            try (InputStream in = new BufferedInputStream(conn.getInputStream());
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] buf = new byte[16384];
+                int read;
+                int total = 0;
+                while ((read = in.read(buf)) > 0) {
+                    total += read;
+                    if (total > maxBytes) {
+                        throw new IOException("حجم الاستجابة أكبر من المتوقع");
+                    }
+                    out.write(buf, 0, read);
+                }
+                return new String(out.toByteArray(), StandardCharsets.UTF_8);
+            }
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+    }
+
     public static PatchManifest fetchManifest() throws Exception {
-        String manifestUrl = LauncherConfig.MANIFEST_URL != null ? LauncherConfig.MANIFEST_URL.trim() : "";
+        return fetchManifestForProfile(GameProfileRegistry.getDefaultProfile());
+    }
+
+    public static PatchManifest fetchManifestForProfile(GameProfile profile) throws Exception {
+        String manifestUrl = (profile != null && !profile.manifestUrl.isEmpty())
+                ? profile.manifestUrl
+                : (LauncherConfig.MANIFEST_URL != null ? LauncherConfig.MANIFEST_URL.trim() : "");
         String fallbackZip = LauncherConfig.FALLBACK_ZIP_URL != null ? LauncherConfig.FALLBACK_ZIP_URL.trim() : "";
 
         if (!manifestUrl.isEmpty() && !manifestUrl.contains("YOUR_USERNAME")) {
-            HttpURLConnection conn = null;
             try {
-                conn = openHttpsConnection(manifestUrl);
-                try (InputStream in = new BufferedInputStream(conn.getInputStream());
-                     ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                    byte[] buf = new byte[16384];
-                    int read;
-                    int total = 0;
-                    while ((read = in.read(buf)) > 0) {
-                        total += read;
-                        if (total > 1024 * 1024) {
-                            throw new IOException("حجم ملف manifest.json أكبر من المتوقع");
-                        }
-                        out.write(buf, 0, read);
-                    }
-                    return PatchManifest.fromJson(new String(out.toByteArray(), StandardCharsets.UTF_8));
-                }
+                return PatchManifest.fromJson(downloadUtf8Text(manifestUrl, 1024 * 1024));
             } catch (Exception e) {
                 if (fallbackZip.isEmpty() || fallbackZip.contains("YOUR_USERNAME")) {
                     throw e;
-                }
-            } finally {
-                if (conn != null) {
-                    conn.disconnect();
                 }
             }
         }
@@ -117,11 +132,105 @@ public final class PatchDownloader {
                     fallbackZip,
                     "",
                     0L,
-                    LauncherConfig.GAME_TARGET_SUBPATH
+                    LauncherConfig.GAME_TARGET_SUBPATH,
+                    "public"
             );
         }
 
-        throw new IllegalStateException("لم يتم ضبط رابط GitHub Releases في LauncherConfig.java بعد.");
+        throw new IllegalStateException("لم يتم ضبط رابط GitHub Releases لهذا البروفايل بعد.");
+    }
+
+    /**
+     * يجلب أحدث نسخة اختبار سرية (Beta Pre-release + manifest_beta.json) للعبة المحددة.
+     * يتحقق أولاً من betaManifestUrl إن وُجد، وإلا يبحث تلقائياً في GitHub Releases عن أحدث Pre-release.
+     */
+    public static PatchManifest fetchBetaManifest(GameProfile profile) throws Exception {
+        if (profile == null) {
+            throw new IllegalStateException("بروفايل اللعبة غير محدد.");
+        }
+
+        // 1) Direct betaManifestUrl if configured in profile
+        if (!profile.betaManifestUrl.isEmpty()) {
+            try {
+                PatchManifest m = PatchManifest.fromJson(downloadUtf8Text(profile.betaManifestUrl, 1024 * 1024));
+                return new PatchManifest(
+                        m.patchVersion, m.gameVersion, m.targetGameVersionCode,
+                        m.expectedLangOrigMd5, m.expectedLangOrigSize, m.expectedForceConfSize,
+                        m.releaseDate, m.changelog, m.downloadUrl, m.sha256, m.sizeBytes,
+                        m.targetSubpath, "beta"
+                );
+            } catch (Exception ignored) {
+                // Fall through to live GitHub Pre-release discovery
+            }
+        }
+
+        // 2) Live GitHub API discovery for newest Pre-release containing manifest_beta.json
+        if (profile.githubRepo.isEmpty()) {
+            throw new IllegalStateException("مستودع GitHub غير محدد لهذا البروفايل.");
+        }
+
+        String apiUrl = "https://api.github.com/repos/" + profile.githubRepo + "/releases?per_page=10";
+        String body = downloadUtf8Text(apiUrl, 2 * 1024 * 1024);
+        JSONArray releases = new JSONArray(body);
+
+        for (int i = 0; i < releases.length(); i++) {
+            JSONObject rel = releases.optJSONObject(i);
+            if (rel == null || !rel.optBoolean("prerelease", false) || rel.optBoolean("draft", false)) {
+                continue;
+            }
+            String tagName = rel.optString("tag_name", "beta");
+            JSONArray assets = rel.optJSONArray("assets");
+            if (assets == null) {
+                continue;
+            }
+            String betaManifestDownloadUrl = "";
+            String fallbackBetaZipUrl = "";
+            long fallbackZipSize = 0L;
+
+            for (int j = 0; j < assets.length(); j++) {
+                JSONObject asset = assets.optJSONObject(j);
+                if (asset == null) {
+                    continue;
+                }
+                String name = asset.optString("name", "").trim().toLowerCase(Locale.US);
+                String dlUrl = asset.optString("browser_download_url", "").trim();
+                if ("manifest_beta.json".equals(name) && !dlUrl.isEmpty()) {
+                    betaManifestDownloadUrl = dlUrl;
+                } else if (name.endsWith(".zip") && fallbackBetaZipUrl.isEmpty() && !dlUrl.isEmpty()) {
+                    fallbackBetaZipUrl = dlUrl;
+                    fallbackZipSize = asset.optLong("size", 0L);
+                }
+            }
+
+            if (!betaManifestDownloadUrl.isEmpty()) {
+                PatchManifest m = PatchManifest.fromJson(downloadUtf8Text(betaManifestDownloadUrl, 1024 * 1024));
+                return new PatchManifest(
+                        m.patchVersion, m.gameVersion, m.targetGameVersionCode,
+                        m.expectedLangOrigMd5, m.expectedLangOrigSize, m.expectedForceConfSize,
+                        m.releaseDate, m.changelog, m.downloadUrl, m.sha256, m.sizeBytes,
+                        m.targetSubpath, "beta"
+                );
+            }
+            if (!fallbackBetaZipUrl.isEmpty()) {
+                return new PatchManifest(
+                        tagName,
+                        profile.targetGameVersionName,
+                        profile.targetGameVersionCode,
+                        LauncherConfig.TARGET_LANG_ORIG_MD5,
+                        LauncherConfig.TARGET_LANG_ORIG_SIZE,
+                        LauncherConfig.TARGET_INDEX_ORIG_SIZE,
+                        rel.optString("published_at", ""),
+                        "نسخة اختبار (Pre-release): " + tagName,
+                        fallbackBetaZipUrl,
+                        "",
+                        fallbackZipSize,
+                        profile.patchStrategy.resolveDefaultTargetSubpath(""),
+                        "beta"
+                );
+            }
+        }
+
+        throw new IllegalStateException("لا توجد نسخة اختبار (Beta Pre-release) مرفوعة حالياً على GitHub. ارفع نسخة اختبار من أداة الـ PC أولاً.");
     }
 
     public static void downloadToFile(
