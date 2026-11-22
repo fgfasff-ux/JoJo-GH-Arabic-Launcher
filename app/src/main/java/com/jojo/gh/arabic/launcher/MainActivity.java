@@ -1781,15 +1781,6 @@ public class MainActivity extends Activity {
     // كشف وإدارة صلاحيات الوصول (Shizuku / SAF / DirectFS / Root)
     // =========================================================================
 
-    private boolean isPackageInstalled(String pkg) {
-        try {
-            getPackageManager().getPackageInfo(pkg, 0);
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
     private String getInstalledGameVersion() {
         PackageManager pm = getPackageManager();
         for (String pkg : LauncherConfig.GAME_PACKAGES) {
