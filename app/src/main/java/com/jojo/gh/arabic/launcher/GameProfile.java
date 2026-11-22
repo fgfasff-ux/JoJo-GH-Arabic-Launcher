@@ -27,6 +27,11 @@ public final class GameProfile {
     public final String statScope;
     public final String statCompat;
     public final String statSafety;
+    public final String defaultStoreDeveloper;
+    public final String defaultStoreScore;
+    public final String defaultStoreInstalls;
+    public final String defaultStoreSummary;
+    public final int defaultTranslatedStrings;
 
     public GameProfile(
             String id,
@@ -50,7 +55,12 @@ public final class GameProfile {
             String statLines,
             String statScope,
             String statCompat,
-            String statSafety
+            String statSafety,
+            String defaultStoreDeveloper,
+            String defaultStoreScore,
+            String defaultStoreInstalls,
+            String defaultStoreSummary,
+            int defaultTranslatedStrings
     ) {
         this.id = id;
         this.title = title;
@@ -74,6 +84,11 @@ public final class GameProfile {
         this.statScope = statScope;
         this.statCompat = statCompat;
         this.statSafety = statSafety;
+        this.defaultStoreDeveloper = defaultStoreDeveloper != null ? defaultStoreDeveloper : "";
+        this.defaultStoreScore = defaultStoreScore != null ? defaultStoreScore : "";
+        this.defaultStoreInstalls = defaultStoreInstalls != null ? defaultStoreInstalls : "";
+        this.defaultStoreSummary = defaultStoreSummary != null ? defaultStoreSummary : "";
+        this.defaultTranslatedStrings = Math.max(0, defaultTranslatedStrings);
     }
 
     public boolean hasOnlineConfig() {

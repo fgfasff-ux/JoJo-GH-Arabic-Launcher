@@ -10,6 +10,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.SurfaceTexture;
@@ -108,6 +109,7 @@ public class MainActivity extends Activity {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService iconExecutor = Executors.newSingleThreadExecutor();
 
     private volatile boolean isBusy = false;
     private volatile PendingAction pendingAction = PendingAction.NONE;
@@ -196,6 +198,14 @@ public class MainActivity extends Activity {
     private Button btnDiagScan;
     private Button btnLaunchGame;
     private Button btnRestore;
+    private ImageView ivHubLogo;
+    private TextView tvStatLinesChip;
+    private TextView tvStatCompatChip;
+    private TextView tvStoreScorePill;
+    private TextView tvStoreInstallsPill;
+    private TextView tvStoreDevPill;
+    private TextView tvStoreSummary;
+    private volatile String lastInstallFailureReason = "";
 
     private final Shizuku.OnBinderReceivedListener shizukuBinderReceivedListener = () -> {
         mainHandler.post(() -> {
@@ -243,6 +253,7 @@ public class MainActivity extends Activity {
         bridgeAuthToken = loadOrCreateBridgeToken();
         SafHelper.cleanupInvalidTreePermissions(this);
         loadFonts();
+        latestRemoteManifest = PatchManifest.loadFromCache(this, activeProfile.id);
 
         try {
             Shizuku.addBinderReceivedListenerSticky(shizukuBinderReceivedListener);
@@ -252,6 +263,10 @@ public class MainActivity extends Activity {
         }
 
         setContentView(buildRootContainer());
+        applyDynamicMetadataToUi();
+        if (latestRemoteManifest != null && !latestRemoteManifest.iconUrl.isEmpty()) {
+            syncDynamicIcon(activeProfile, latestRemoteManifest.iconUrl);
+        }
         syncBetaModeUi();
         ensureLegacyStoragePermissions();
         refreshStatusAsync(null);
@@ -921,7 +936,12 @@ public class MainActivity extends Activity {
         iconBox.setPadding(dp(2), dp(2), dp(2), dp(2));
 
         ImageView iv = new ImageView(this);
-        iv.setImageResource(profile.iconRes);
+        Bitmap cachedBmp = GameIconCache.loadCachedBitmap(this, profile.id);
+        if (cachedBmp != null) {
+            iv.setImageBitmap(cachedBmp);
+        } else {
+            iv.setImageResource(profile.iconRes);
+        }
         iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
         clipRounded(iv, dp(16));
         iconBox.addView(iv, new FrameLayout.LayoutParams(dp(84), dp(84)));
@@ -998,6 +1018,7 @@ public class MainActivity extends Activity {
         }
         homeScreenView.setVisibility(View.GONE);
         gameHubScreenView.setVisibility(View.VISIBLE);
+        applyDynamicMetadataToUi();
         syncBetaModeUi();
         resumePromoVideo();
         refreshStatusAsync(null);
@@ -1103,11 +1124,16 @@ public class MainActivity extends Activity {
         iconWrap.setBackground(iconFrame);
         iconWrap.setPadding(dp(2), dp(2), dp(2), dp(2));
 
-        ImageView ivLogo = new ImageView(this);
-        ivLogo.setImageResource(R.drawable.ic_jojo_game);
-        ivLogo.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        clipRounded(ivLogo, dp(12));
-        iconWrap.addView(ivLogo, new FrameLayout.LayoutParams(dp(50), dp(50)));
+        ivHubLogo = new ImageView(this);
+        Bitmap hubCachedIcon = GameIconCache.loadCachedBitmap(this, activeProfile.id);
+        if (hubCachedIcon != null) {
+            ivHubLogo.setImageBitmap(hubCachedIcon);
+        } else {
+            ivHubLogo.setImageResource(activeProfile.iconRes);
+        }
+        ivHubLogo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        clipRounded(ivHubLogo, dp(12));
+        iconWrap.addView(ivHubLogo, new FrameLayout.LayoutParams(dp(50), dp(50)));
 
         LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(54), dp(54));
         iconLp.leftMargin = dp(12);
@@ -1410,16 +1436,38 @@ public class MainActivity extends Activity {
         root.addView(rowTools, rowToolsLp);
 
         // ---------------------------------------------------------------------
-        // 5) شريط إحصائيات التعريب الفعلية (شبكة 2×2 مطابقة للتصميم المرجعي)
+        // 5) بطاقة تفاعلية لـ «📊 إحصائيات حزمة التعريب» (تفتح نافذة التفاصيل الكاملة)
         // ---------------------------------------------------------------------
-        LinearLayout statsCard = makeCard(LauncherConfig.COL_BORDER);
-        TextView statsTitle = makeText("إحصائيات حزمة تعريب R.D.AV", 12.5f, LauncherConfig.COL_GOLD, true);
-        statsTitle.setPadding(0, 0, 0, dp(8));
-        statsCard.addView(statsTitle);
+        LinearLayout statsCard = makeCard(LauncherConfig.COL_BORDER_GOLD);
+        statsCard.setClickable(true);
+        statsCard.setOnClickListener(v -> showPatchStatsModal());
+
+        LinearLayout statsHdrRow = new LinearLayout(this);
+        statsHdrRow.setOrientation(LinearLayout.HORIZONTAL);
+        statsHdrRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams shLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        shLp.bottomMargin = dp(8);
+
+        TextView statsTitle = makeText("📊  إحصائيات حزمة التعريب", 13f, LauncherConfig.COL_GOLD, true);
+        statsHdrRow.addView(statsTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView statsOpenPill = makeText("التفاصيل الكاملة ↗", 10f, Color.parseColor("#0D061A"), true);
+        statsOpenPill.setPadding(dp(10), dp(4), dp(10), dp(4));
+        GradientDrawable sopBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{LauncherConfig.COL_GOLD, LauncherConfig.COL_ACCENT}
+        );
+        sopBg.setCornerRadius(dp(9));
+        statsOpenPill.setBackground(sopBg);
+        statsOpenPill.setOnClickListener(v -> showPatchStatsModal());
+        statsHdrRow.addView(statsOpenPill);
+        statsCard.addView(statsHdrRow, shLp);
 
         LinearLayout statsRow1 = new LinearLayout(this);
         statsRow1.setOrientation(LinearLayout.HORIZONTAL);
-        statsRow1.addView(makeStatChip(LauncherConfig.STAT_LINES, LauncherConfig.COL_GOLD), makeHalfLp(true));
+        tvStatLinesChip = makeStatChip(LauncherConfig.STAT_LINES, LauncherConfig.COL_GOLD);
+        statsRow1.addView(tvStatLinesChip, makeHalfLp(true));
         statsRow1.addView(makeStatChip(LauncherConfig.STAT_SCOPE, LauncherConfig.COL_CYAN), makeHalfLp(false));
         LinearLayout.LayoutParams sr1Lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -1428,11 +1476,50 @@ public class MainActivity extends Activity {
 
         LinearLayout statsRow2 = new LinearLayout(this);
         statsRow2.setOrientation(LinearLayout.HORIZONTAL);
-        statsRow2.addView(makeStatChip(LauncherConfig.STAT_COMPAT, LauncherConfig.COL_SUCCESS), makeHalfLp(true));
+        tvStatCompatChip = makeStatChip(LauncherConfig.STAT_COMPAT, LauncherConfig.COL_SUCCESS);
+        statsRow2.addView(tvStatCompatChip, makeHalfLp(true));
         statsRow2.addView(makeStatChip(LauncherConfig.STAT_SAFETY, LauncherConfig.COL_TEXT), makeHalfLp(false));
         statsCard.addView(statsRow2);
 
         root.addView(statsCard, makeCardLp());
+
+        // ---------------------------------------------------------------------
+        // 5.5) بطاقة معلومات اللعبة من المتجر (متزامنة تلقائياً عبر manifest.json)
+        // ---------------------------------------------------------------------
+        LinearLayout storeCard = makeCard(LauncherConfig.COL_BORDER);
+        TextView storeHdr = makeText("معلومات اللعبة من المتجر (Google Play)", 12f, LauncherConfig.COL_CYAN, true);
+        storeHdr.setPadding(0, 0, 0, dp(8));
+        storeCard.addView(storeHdr);
+
+        LinearLayout storePillsRow = new LinearLayout(this);
+        storePillsRow.setOrientation(LinearLayout.HORIZONTAL);
+        storePillsRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams spRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        spRowLp.bottomMargin = dp(8);
+
+        tvStoreScorePill = makeStoreInfoPill("⭐ " + activeProfile.defaultStoreScore, LauncherConfig.COL_GOLD);
+        LinearLayout.LayoutParams scLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        scLp.leftMargin = dp(6);
+        storePillsRow.addView(tvStoreScorePill, scLp);
+
+        tvStoreInstallsPill = makeStoreInfoPill("⬇ " + activeProfile.defaultStoreInstalls, LauncherConfig.COL_SUCCESS);
+        LinearLayout.LayoutParams insLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        insLp.leftMargin = dp(6);
+        storePillsRow.addView(tvStoreInstallsPill, insLp);
+
+        tvStoreDevPill = makeStoreInfoPill("🏢 " + activeProfile.defaultStoreDeveloper, LauncherConfig.COL_CYAN);
+        storePillsRow.addView(tvStoreDevPill, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        storeCard.addView(storePillsRow, spRowLp);
+
+        tvStoreSummary = makeText(activeProfile.defaultStoreSummary, 11.2f, LauncherConfig.COL_MUTED, false);
+        tvStoreSummary.setLineSpacing(dp(3), 1f);
+        storeCard.addView(tvStoreSummary);
+
+        root.addView(storeCard, makeCardLp());
 
         // ---------------------------------------------------------------------
         // 6) بطاقة التحديثات أونلاين والتذييل
@@ -1538,6 +1625,198 @@ public class MainActivity extends Activity {
         bg.setStroke(dp(1), Color.parseColor("#2D1D52"));
         tv.setBackground(bg);
         return tv;
+    }
+
+    private TextView makeStoreInfoPill(String text, int fgColor) {
+        TextView tv = makeText(text, 10.2f, fgColor, true);
+        tv.setGravity(Gravity.CENTER);
+        tv.setSingleLine(true);
+        tv.setPadding(dp(9), dp(5), dp(9), dp(5));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(LauncherConfig.COL_CARD_INNER);
+        bg.setCornerRadius(dp(9));
+        bg.setStroke(dp(1), Color.parseColor("#2D1D52"));
+        tv.setBackground(bg);
+        return tv;
+    }
+
+    private void syncDynamicIcon(GameProfile profile, String iconUrl) {
+        if (profile == null || iconUrl == null || iconUrl.trim().isEmpty()) {
+            return;
+        }
+        GameIconCache.syncIconAsync(this, iconExecutor, mainHandler, profile.id, iconUrl, bmp -> {
+            if (bmp == null) {
+                return;
+            }
+            if (ivHubLogo != null && profile.id.equals(activeProfile.id)) {
+                ivHubLogo.setImageBitmap(bmp);
+            }
+            refreshHomeCards();
+        });
+    }
+
+    private void applyDynamicMetadataToUi() {
+        PatchManifest m = latestRemoteManifest;
+
+        // 1) تحديث أيقونة شاشة التفاصيل من الذاكرة المخبأة أو المدمجة
+        if (ivHubLogo != null) {
+            Bitmap cached = GameIconCache.loadCachedBitmap(this, activeProfile.id);
+            if (cached != null) {
+                ivHubLogo.setImageBitmap(cached);
+            } else {
+                ivHubLogo.setImageResource(activeProfile.iconRes);
+            }
+        }
+
+        // 2) تحديث بطاقة معلومات المتجر
+        String score = (m != null && !m.storeScore.isEmpty()) ? m.storeScore : activeProfile.defaultStoreScore;
+        String installs = (m != null && !m.storeInstalls.isEmpty()) ? m.storeInstalls : activeProfile.defaultStoreInstalls;
+        String dev = (m != null && !m.storeDeveloper.isEmpty()) ? m.storeDeveloper : activeProfile.defaultStoreDeveloper;
+        String summary = (m != null && !m.storeSummary.isEmpty()) ? m.storeSummary : activeProfile.defaultStoreSummary;
+
+        if (tvStoreScorePill != null) {
+            tvStoreScorePill.setText("⭐ " + (score.isEmpty() ? "—" : score));
+        }
+        if (tvStoreInstallsPill != null) {
+            tvStoreInstallsPill.setText("⬇ " + (installs.isEmpty() ? "—" : installs));
+        }
+        if (tvStoreDevPill != null) {
+            tvStoreDevPill.setText("🏢 " + (dev.isEmpty() ? "—" : dev));
+        }
+        if (tvStoreSummary != null) {
+            tvStoreSummary.setText(summary.isEmpty() ? activeProfile.subtitle : summary);
+        }
+
+        // 3) تحديث شرائح الإحصائيات المختصرة
+        if (tvStatLinesChip != null) {
+            int count = (m != null && m.statsTranslatedStrings > 0)
+                    ? m.statsTranslatedStrings
+                    : activeProfile.defaultTranslatedStrings;
+            if (count > 0) {
+                tvStatLinesChip.setText(String.format(Locale.US, "%,d نصاً معرّباً بالفصحى", count));
+            } else {
+                tvStatLinesChip.setText(activeProfile.statLines);
+            }
+        }
+        if (tvStatCompatChip != null) {
+            String gVer = (m != null && !m.gameVersion.isEmpty()) ? m.gameVersion : activeProfile.targetGameVersionName;
+            tvStatCompatChip.setText("متوافق 100% مع الإصدار " + gVer);
+        }
+    }
+
+    /**
+     * نافذة منبثقة احترافية لعرض «إحصائيات حزمة التعريب» الكاملة والبصمات الرقمية.
+     */
+    private void showPatchStatsModal() {
+        PatchManifest m = latestRemoteManifest;
+
+        int translatedCount = (m != null && m.statsTranslatedStrings > 0)
+                ? m.statsTranslatedStrings
+                : activeProfile.defaultTranslatedStrings;
+        String translatedText = translatedCount > 0
+                ? String.format(Locale.US, "%,d نصاً معرّباً بالفصحى", translatedCount)
+                : activeProfile.statLines;
+
+        String currentPatchVer;
+        if (isPatchCurrentlyInstalled && !installedPatchVersion.isEmpty()) {
+            currentPatchVer = installedPatchVersion;
+        } else if (m != null && !m.patchVersion.isEmpty()) {
+            currentPatchVer = "v" + m.patchVersion + " (متاح للتثبيت)";
+        } else {
+            currentPatchVer = activeProfile.patchVersionLabel;
+        }
+
+        String channelLabel = (m != null && m.isBetaChannel()) ? "🧪 Beta Test (اختبار)" : "🚀 إصدار رسمي (Public)";
+        String gameVer = (m != null && !m.gameVersion.isEmpty()) ? m.gameVersion : activeProfile.targetGameVersionName;
+        long gameVc = (m != null && m.targetGameVersionCode > 0) ? m.targetGameVersionCode : activeProfile.targetGameVersionCode;
+        String releaseDate = (m != null && !m.releaseDate.isEmpty()) ? m.releaseDate : "2026-11-22";
+        String engineName = (m != null && !m.statsEngine.isEmpty()) ? m.statsEngine : activeProfile.patchStrategy.code;
+        String md5Hash = (m != null && !m.expectedPatchedLangMd5.isEmpty())
+                ? m.expectedPatchedLangMd5
+                : LauncherConfig.TARGET_LANG_PATCHED_MD5;
+        String sha256Hash = (m != null && !m.sha256.isEmpty())
+                ? m.sha256
+                : ((m != null && !m.expectedPatchedLangSha256.isEmpty()) ? m.expectedPatchedLangSha256 : "يُتحقق تلقائياً عند التحميل");
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(dp(16), dp(14), dp(16), dp(10));
+        container.setBackgroundColor(LauncherConfig.COL_BG);
+
+        // ترويسة النافذة
+        LinearLayout hdr = new LinearLayout(this);
+        hdr.setOrientation(LinearLayout.VERTICAL);
+        hdr.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable hdrBg = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.parseColor("#2A1452"), LauncherConfig.COL_CARD}
+        );
+        hdrBg.setCornerRadius(dp(14));
+        hdrBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
+        hdr.setBackground(hdrBg);
+        hdr.addView(makeText("📊  إحصائيات حزمة التعريب", 15.5f, LauncherConfig.COL_GOLD, true));
+        TextView sub = makeText(activeProfile.title + " • " + channelLabel, 11f, LauncherConfig.COL_CYAN, false);
+        sub.setPadding(0, dp(3), 0, 0);
+        hdr.addView(sub);
+        LinearLayout.LayoutParams hdrLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        hdrLp.bottomMargin = dp(10);
+        container.addView(hdr, hdrLp);
+
+        addModalDetailRow(container, "إجمالي النصوص المعرّبة", translatedText, LauncherConfig.COL_GOLD, false);
+        addModalDetailRow(container, "إصدار التعريب الحالي", currentPatchVer, LauncherConfig.COL_TEXT, false);
+        addModalDetailRow(container, "إصدار اللعبة المتوافق", "v" + gameVer + " (versionCode #" + gameVc + ")", LauncherConfig.COL_SUCCESS, false);
+        addModalDetailRow(container, "تاريخ التحديث", releaseDate, LauncherConfig.COL_CYAN, false);
+        addModalDetailRow(container, "محرك الحقن المستخدم", engineName + " (" + activeProfile.patchStrategy.arabicLabel + ")", LauncherConfig.COL_TEXT, false);
+        addModalDetailRow(container, "بصمة التحقق (MD5 لملف اللغة)", md5Hash, LauncherConfig.COL_GOLD, true);
+        addModalDetailRow(container, "بصمة التحقق (SHA-256 للحزمة)", sha256Hash, LauncherConfig.COL_CYAN, true);
+
+        scroll.addView(container);
+
+        final String copyPayload = "=== إحصائيات حزمة تعريب R.D.AV ===\n"
+                + "اللعبة: " + activeProfile.title + "\n"
+                + "إجمالي النصوص المعرّبة: " + translatedText + "\n"
+                + "إصدار التعريب: " + currentPatchVer + "\n"
+                + "إصدار اللعبة المتوافق: v" + gameVer + " (#" + gameVc + ")\n"
+                + "تاريخ التحديث: " + releaseDate + "\n"
+                + "محرك الحقن: " + engineName + "\n"
+                + "MD5: " + md5Hash + "\n"
+                + "SHA-256: " + sha256Hash;
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+        b.setView(scroll);
+        b.setPositiveButton("نسخ الإحصائيات والبصمات", (d, w) -> copyReportToClipboard(copyPayload, false));
+        b.setNegativeButton("إغلاق", null);
+        b.show();
+    }
+
+    private void addModalDetailRow(LinearLayout parent, String label, String value, int valueColor, boolean monospaceLtr) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(12), dp(8), dp(12), dp(8));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(LauncherConfig.COL_CARD_INNER);
+        bg.setCornerRadius(dp(10));
+        bg.setStroke(dp(1), Color.parseColor("#2B1B4E"));
+        box.setBackground(bg);
+
+        TextView tvLbl = makeText(label, 10.5f, LauncherConfig.COL_MUTED, false);
+        box.addView(tvLbl);
+
+        TextView tvVal = makeText(value, monospaceLtr ? 10.2f : 12.2f, valueColor, true);
+        tvVal.setPadding(0, dp(3), 0, 0);
+        tvVal.setTextIsSelectable(true);
+        if (monospaceLtr) {
+            tvVal.setTypeface(Typeface.MONOSPACE);
+            tvVal.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        }
+        box.addView(tvVal);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(7);
+        parent.addView(box, lp);
     }
 
     private LinearLayout.LayoutParams makeHalfLp(boolean isFirstInRtl) {
@@ -2356,7 +2635,11 @@ public class MainActivity extends Activity {
         worker.execute(() -> {
             try {
                 PatchManifest manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
+                manifest.saveToCache(this, activeProfile.id);
                 latestRemoteManifest = manifest;
+                if (!manifest.iconUrl.isEmpty()) {
+                    syncDynamicIcon(activeProfile, manifest.iconUrl);
+                }
                 mainHandler.post(this::updateRemoteCardUi);
             } catch (Throwable t) {
                 if (userTriggered) {
@@ -2390,6 +2673,7 @@ public class MainActivity extends Activity {
         }
         tvRemoteInfo.setText(sb.toString());
         tvRemoteInfo.setTextColor(LauncherConfig.COL_TEXT);
+        applyDynamicMetadataToUi();
         refreshHomeCards();
     }
 
@@ -2428,14 +2712,18 @@ public class MainActivity extends Activity {
                 stageDir.mkdirs();
 
                 PatchManifest manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
+                manifest.saveToCache(this, activeProfile.id);
                 latestRemoteManifest = manifest;
+                if (!manifest.iconUrl.isEmpty()) {
+                    syncDynamicIcon(activeProfile, manifest.iconUrl);
+                }
                 mainHandler.post(this::updateRemoteCardUi);
 
                 updateProgress(7, "جارٍ التحقق عبر حارس الأمان (Version Safety Guard)...");
                 SafetyCheckResult safety = evaluateSafetyGuardSync(mode, manifest, true);
                 if (!safety.safe) {
                     showErrorState(LauncherConfig.SAFETY_GUARD_ALERT_MESSAGE);
-                    mainHandler.post(() -> showSafetyGuardAlertDialog(safety.reason));
+                    mainHandler.post(() -> showInstallFailureDialog("عدم تطابق الإصدار / حارس الأمان", safety.reason));
                     return;
                 }
 
@@ -2456,7 +2744,9 @@ public class MainActivity extends Activity {
 
                 executeInstallFromStage(mode, effectiveStage, manifest.patchVersion, manifest.resolveEffectiveSubpath());
             } catch (Throwable t) {
-                showErrorState("تعذر إكمال التثبيت أونلاين: " + readableError(t));
+                String err = readableError(t);
+                showErrorState("تعذر إكمال التثبيت أونلاين: " + err);
+                mainHandler.post(() -> showInstallFailureDialog("التثبيت أونلاين (GitHub)", err));
             } finally {
                 ShellBridgeServer.deleteRecursive(workDir);
                 setBusyUi(false, null, -1);
@@ -2507,7 +2797,7 @@ public class MainActivity extends Activity {
                 SafetyCheckResult safety = evaluateSafetyGuardSync(mode, latestRemoteManifest, true);
                 if (!safety.safe) {
                     showErrorState(LauncherConfig.SAFETY_GUARD_ALERT_MESSAGE);
-                    mainHandler.post(() -> showSafetyGuardAlertDialog(safety.reason));
+                    mainHandler.post(() -> showInstallFailureDialog("عدم تطابق الإصدار / حارس الأمان", safety.reason));
                     return;
                 }
 
@@ -2519,7 +2809,9 @@ public class MainActivity extends Activity {
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
                 executeInstallFromStage(mode, effectiveStage, "v3-full", LauncherConfig.GAME_TARGET_SUBPATH);
             } catch (Throwable t) {
-                showErrorState("فشل تثبيت الحزمة: " + readableError(t));
+                String err = readableError(t);
+                showErrorState("فشل تثبيت الحزمة: " + err);
+                mainHandler.post(() -> showInstallFailureDialog("تثبيت حزمة ZIP المحلية", err));
             } finally {
                 ShellBridgeServer.deleteRecursive(workDir);
                 setBusyUi(false, null, -1);
@@ -2563,6 +2855,9 @@ public class MainActivity extends Activity {
                 stageDir.mkdirs();
 
                 PatchManifest betaManifest = PatchDownloader.fetchBetaManifest(activeProfile);
+                if (!betaManifest.iconUrl.isEmpty()) {
+                    syncDynamicIcon(activeProfile, betaManifest.iconUrl);
+                }
                 updateProgress(12, "🧪 تم العثور على نسخة الاختبار (" + betaManifest.patchVersion + ") — جارٍ التحميل...");
 
                 PatchDownloader.downloadToFile(
@@ -2592,7 +2887,9 @@ public class MainActivity extends Activity {
                         Toast.LENGTH_LONG
                 ).show());
             } catch (Throwable t) {
-                showErrorState("تعذر تثبيت نسخة الاختبار (Beta): " + readableError(t));
+                String err = readableError(t);
+                showErrorState("تعذر تثبيت نسخة الاختبار (Beta): " + err);
+                mainHandler.post(() -> showInstallFailureDialog("تثبيت نسخة الاختبار (Beta Test)", err));
             } finally {
                 ShellBridgeServer.deleteRecursive(workDir);
                 setBusyUi(false, null, -1);
@@ -2698,30 +2995,172 @@ public class MainActivity extends Activity {
         });
     }
 
+    /**
+     * نافذة التنبيه الحمراء التلقائية عند فشل التثبيت أو الحقن لأي سبب،
+     * تطلب من المستخدم فحص سلامة الملفات لإصدار تقرير التشخيص وإرساله فوراً إلى R.D.AV على Instagram.
+     */
+    private void showInstallFailureDialog(String stageLabel, String errorReason) {
+        final String safeStage = (stageLabel != null && !stageLabel.trim().isEmpty()) ? stageLabel.trim() : "تثبيت التعريب";
+        final String safeReason = (errorReason != null && !errorReason.trim().isEmpty()) ? errorReason.trim() : "حدث خطأ غير متوقع أثناء العملية.";
+        lastInstallFailureReason = "[" + safeStage + "] " + safeReason;
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setPadding(dp(16), dp(14), dp(16), dp(10));
+        container.setBackgroundColor(Color.parseColor("#14070D"));
+
+        // ترويسة حمراء واضحة
+        LinearLayout redBanner = new LinearLayout(this);
+        redBanner.setOrientation(LinearLayout.VERTICAL);
+        redBanner.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable redBg = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{Color.parseColor("#5F1124"), Color.parseColor("#3B0A17")}
+        );
+        redBg.setCornerRadius(dp(14));
+        redBg.setStroke(dp(2), LauncherConfig.COL_DANGER);
+        redBanner.setBackground(redBg);
+
+        redBanner.addView(makeText("⚠  فشل تثبيت / حقن التعريب", 15.5f, Color.WHITE, true));
+        TextView tvStage = makeText("المرحلة: " + safeStage, 11.2f, Color.parseColor("#FDA4AF"), true);
+        tvStage.setPadding(0, dp(4), 0, 0);
+        redBanner.addView(tvStage);
+        LinearLayout.LayoutParams rbLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rbLp.bottomMargin = dp(10);
+        container.addView(redBanner, rbLp);
+
+        // صندوق سبب الفشل
+        LinearLayout errBox = new LinearLayout(this);
+        errBox.setOrientation(LinearLayout.VERTICAL);
+        errBox.setPadding(dp(12), dp(10), dp(12), dp(10));
+        GradientDrawable errBg = new GradientDrawable();
+        errBg.setColor(Color.parseColor("#240B14"));
+        errBg.setCornerRadius(dp(10));
+        errBg.setStroke(dp(1), Color.parseColor("#9F1239"));
+        errBox.setBackground(errBg);
+
+        errBox.addView(makeText("سبب الفشل المرصود:", 10.8f, Color.parseColor("#FDA4AF"), true));
+        TextView tvErr = makeText(safeReason, 11.8f, LauncherConfig.COL_TEXT, false);
+        tvErr.setPadding(0, dp(4), 0, 0);
+        tvErr.setLineSpacing(dp(2), 1f);
+        errBox.addView(tvErr);
+        LinearLayout.LayoutParams ebLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        ebLp.bottomMargin = dp(10);
+        container.addView(errBox, ebLp);
+
+        TextView tvGuide = makeText(
+                "لحل المشكلة بسرعة: اضغط الزر أدناه لإجراء «فحص سلامة الملفات» — سيقوم التطبيق بنسخ التقرير التقني تلقائياً وفتح حساب R.D.AV على Instagram لإرساله فوراً.",
+                11.3f, LauncherConfig.COL_MUTED, false
+        );
+        tvGuide.setLineSpacing(dp(3), 1f);
+        tvGuide.setPadding(dp(2), 0, dp(2), dp(12));
+        container.addView(tvGuide);
+
+        AlertDialog dialog = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setView(container)
+                .create();
+
+        // زر بارز لفحص سلامة الملفات وإصدار تقرير
+        Button btnScanNow = new Button(this);
+        btnScanNow.setText("🔍  فحص سلامة الملفات وإصدار تقرير");
+        btnScanNow.setAllCaps(false);
+        btnScanNow.setTextSize(13.5f);
+        btnScanNow.setTextColor(Color.WHITE);
+        btnScanNow.setTypeface(fontBold);
+        GradientDrawable scanBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#E11D48"), Color.parseColor("#BE123C")}
+        );
+        scanBg.setCornerRadius(dp(12));
+        scanBg.setStroke(dp(1), Color.parseColor("#FDA4AF"));
+        btnScanNow.setBackground(scanBg);
+        btnScanNow.setOnClickListener(v -> {
+            dialog.dismiss();
+            runDiagnosticScanFlow(lastInstallFailureReason);
+        });
+        LinearLayout.LayoutParams scanLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        scanLp.bottomMargin = dp(8);
+        container.addView(btnScanNow, scanLp);
+
+        Button btnClose = makeButton("إغلاق", Color.parseColor("#1D0F18"), LauncherConfig.COL_MUTED, Color.parseColor("#4C1D2E"), true);
+        btnClose.setTextSize(12f);
+        btnClose.setOnClickListener(v -> dialog.dismiss());
+        container.addView(btnClose, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40)));
+
+        dialog.show();
+    }
+
     private void runDiagnosticScanFlow() {
+        runDiagnosticScanFlow(lastInstallFailureReason);
+    }
+
+    private void runDiagnosticScanFlow(String failureContext) {
         if (isBusy) {
             return;
         }
         worker.execute(() -> {
-            AccessMode mode = detectAccessMode();
-            if (mode != AccessMode.BRIDGE_ACTIVE && mode != AccessMode.DIRECT_FS) {
-                mainHandler.post(() -> {
-                    Toast.makeText(this, "يلزم تفعيل Shizuku لفحص سلامة الملفات وبصمة MD5.", Toast.LENGTH_LONG).show();
-                    requestBestAccessInteractive();
-                });
-                return;
-            }
-            setBusyUi(true, "جارٍ فحص سلامة ملفات JoJo: Golden Hymn وبصمة MD5...", 40);
+            setBusyUi(true, "جارٍ فحص المسارات والصلاحيات وسلامة ملفات " + activeProfile.title + "...", 35);
             try {
-                String resp = (mode == AccessMode.BRIDGE_ACTIVE)
-                        ? sendBridgeCommand("SCAN_DIAG\t" + getHintDir().getAbsolutePath(), 30000)
-                        : ShellBridgeServer.runDiagnosticScan(getHintDir());
-                if (resp == null || !resp.startsWith("OK|")) {
-                    throw new IllegalStateException("تعذر إتمام الفحص: " + resp);
+                AccessMode mode = detectAccessMode();
+                StringBuilder fullReport = new StringBuilder();
+                fullReport.append("=== R.D.AV Multi-Game Hub Diagnostic Report ===\n");
+                fullReport.append("Launcher: v").append(LauncherConfig.APP_VERSION).append("\n");
+                fullReport.append("Device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL)
+                        .append(" (Android ").append(Build.VERSION.RELEASE)
+                        .append(" / API ").append(Build.VERSION.SDK_INT).append(")\n");
+                fullReport.append("Active Game: ").append(activeProfile.title)
+                        .append(" [").append(activeProfile.packageName).append("]\n");
+                fullReport.append("Strategy: ").append(activeProfile.patchStrategy.code).append("\n");
+                fullReport.append("Game Installed: ").append(isPackageInstalled(activeProfile.packageName)).append("\n");
+                String instGameVer = getInstalledGameVersion();
+                long instGameVc = getInstalledGameVersionCode();
+                fullReport.append("Installed Game Version: ")
+                        .append(instGameVer != null ? instGameVer : "N/A")
+                        .append(" (versionCode=").append(instGameVc).append(")\n");
+                fullReport.append("Target Game Version: v").append(activeProfile.targetGameVersionName)
+                        .append(" (#").append(activeProfile.targetGameVersionCode).append(")\n");
+                fullReport.append("Access Mode: ").append(mode.name()).append("\n");
+                fullReport.append("Shizuku Installed: ").append(isPackageInstalled(LauncherConfig.SHIZUKU_PACKAGE))
+                        .append(" | SAF Granted: ").append(SafHelper.findGrantedTreeUri(this) != null).append("\n");
+                fullReport.append("Patch Installed: ").append(isPatchCurrentlyInstalled)
+                        .append(" (").append(installedPatchVersion.isEmpty() ? "none" : installedPatchVersion).append(")\n");
+                fullReport.append("Beta Mode: ").append(BetaModeManager.isBetaEnabled(this)).append("\n");
+                if (latestRemoteManifest != null) {
+                    fullReport.append("Latest Manifest: v").append(latestRemoteManifest.patchVersion)
+                            .append(" [").append(latestRemoteManifest.channel).append("]")
+                            .append(" for game v").append(latestRemoteManifest.gameVersion).append("\n");
                 }
-                String report = resp.substring(3).replace("\\n", "\n");
-                updateProgress(100, "اكتمل فحص سلامة الملفات بنجاح ✓");
-                mainHandler.post(() -> showDiagnosticReportDialog(report));
+                if (failureContext != null && !failureContext.trim().isEmpty()) {
+                    fullReport.append("Last Failure: ").append(failureContext.trim()).append("\n");
+                }
+                fullReport.append("----------------------------------------\n");
+
+                if (mode == AccessMode.BRIDGE_ACTIVE || mode == AccessMode.DIRECT_FS) {
+                    updateProgress(70, "جارٍ فحص سلامة ملفات اللعبة وبصمات MD5...");
+                    String resp = (mode == AccessMode.BRIDGE_ACTIVE)
+                            ? sendBridgeCommand("SCAN_DIAG\t" + getHintDir().getAbsolutePath(), 30000)
+                            : ShellBridgeServer.runDiagnosticScan(getHintDir());
+                    if (resp != null && resp.startsWith("OK|")) {
+                        fullReport.append(resp.substring(3).replace("\\n", "\n"));
+                    } else {
+                        fullReport.append("Deep File Scan Error: ").append(resp).append("\n");
+                    }
+                } else {
+                    fullReport.append("Deep File Scan: SKIPPED (Shizuku / DirectFS not active — mode=")
+                            .append(mode.name()).append(")\n");
+                    fullReport.append("Tip: Please activate Shizuku or grant SAF folder permission.\n");
+                }
+
+                final String finalReport = fullReport.toString();
+                updateProgress(100, "اكتمل الفحص وتم نسخ التقرير التقني تلقائياً إلى الحافظة ✓");
+                mainHandler.post(() -> {
+                    copyReportToClipboard(finalReport, true);
+                    showDiagnosticReportDialog(finalReport);
+                });
             } catch (Throwable t) {
                 showErrorState("خطأ أثناء الفحص: " + readableError(t));
             } finally {
@@ -2731,32 +3170,126 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void copyReportToClipboard(String text, boolean isAutoDiag) {
+        try {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null && text != null) {
+                cm.setPrimaryClip(ClipData.newPlainText("R.D.AV Support Report", text));
+                String toastMsg = isAutoDiag
+                        ? "✓ تم نسخ تقرير التشخيص التقني تلقائياً إلى الحافظة"
+                        : "✓ تم النسخ إلى الحافظة بنجاح";
+                Toast.makeText(this, toastMsg, Toast.LENGTH_LONG).show();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void openInstagramSupport() {
+        String igUrl = LauncherConfig.INSTAGRAM_URL;
+        try {
+            Intent appIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(igUrl));
+            appIntent.setPackage("com.instagram.android");
+            appIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(appIntent);
+            return;
+        } catch (Throwable ignored) {
+        }
+        openUrl(igUrl);
+    }
+
     private void showDiagnosticReportDialog(String report) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(14), dp(16), dp(12));
+        root.setBackgroundColor(LauncherConfig.COL_BG);
+
+        // شارة تأكيد النسخ التلقائي إلى الحافظة
+        TextView copiedBanner = makeText(
+                "✅  تم نسخ التقرير تلقائياً إلى الحافظة — اضغط الزر أدناه لفتح Instagram ولصقه مباشرة في الرسالة",
+                11.2f, LauncherConfig.COL_SUCCESS, true
+        );
+        copiedBanner.setPadding(dp(12), dp(9), dp(12), dp(9));
+        GradientDrawable cbBg = new GradientDrawable();
+        cbBg.setColor(Color.parseColor("#0F2D1F"));
+        cbBg.setCornerRadius(dp(10));
+        cbBg.setStroke(dp(1), LauncherConfig.COL_SUCCESS);
+        copiedBanner.setBackground(cbBg);
+        LinearLayout.LayoutParams cbLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        cbLp.bottomMargin = dp(10);
+        root.addView(copiedBanner, cbLp);
+
         ScrollView sv = new ScrollView(this);
-        sv.setPadding(dp(16), dp(12), dp(16), dp(12));
+        sv.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable svBg = new GradientDrawable();
+        svBg.setColor(LauncherConfig.COL_CARD_INNER);
+        svBg.setCornerRadius(dp(10));
+        svBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
+        sv.setBackground(svBg);
+
         TextView tv = new TextView(this);
         tv.setText(report);
-        tv.setTextSize(11.5f);
+        tv.setTextSize(10.5f);
+        tv.setTypeface(Typeface.MONOSPACE);
         tv.setTextColor(LauncherConfig.COL_TEXT);
         tv.setTextIsSelectable(true);
         tv.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         sv.addView(tv);
 
-        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-        b.setTitle("تقرير فحص سلامة ملفات JoJo: Golden Hymn");
-        b.setView(sv);
-        b.setPositiveButton("نسخ التقرير", (d, w) -> {
-            try {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                if (cm != null) {
-                    cm.setPrimaryClip(ClipData.newPlainText("JoJo GH Diagnostic", report));
-                    Toast.makeText(this, "تم نسخ التقرير إلى الحافظة ✓", Toast.LENGTH_SHORT).show();
-                }
-            } catch (Throwable ignored) {
-            }
+        LinearLayout.LayoutParams svLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(230));
+        svLp.bottomMargin = dp(12);
+        root.addView(sv, svLp);
+
+        AlertDialog dialog = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("تقرير فحص سلامة الملفات — " + activeProfile.title)
+                .setView(root)
+                .create();
+
+        // الزر البارز: إرسال التقرير إلى R.D.AV على Instagram
+        Button btnSendIg = new Button(this);
+        btnSendIg.setText("📩  إرسال التقرير إلى R.D.AV على Instagram");
+        btnSendIg.setAllCaps(false);
+        btnSendIg.setTextSize(13.5f);
+        btnSendIg.setTextColor(Color.WHITE);
+        btnSendIg.setTypeface(fontBold);
+        GradientDrawable igBtnBg = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.parseColor("#833AB4"), Color.parseColor("#C13584"), Color.parseColor("#F59E0B")}
+        );
+        igBtnBg.setCornerRadius(dp(12));
+        igBtnBg.setStroke(dp(1), LauncherConfig.COL_GOLD);
+        btnSendIg.setBackground(igBtnBg);
+        btnSendIg.setOnClickListener(v -> {
+            copyReportToClipboard(report, false);
+            openInstagramSupport();
         });
-        b.setNegativeButton("إغلاق", null);
-        b.show();
+        LinearLayout.LayoutParams igLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48));
+        igLp.bottomMargin = dp(8);
+        root.addView(btnSendIg, igLp);
+
+        LinearLayout bottomRow = new LinearLayout(this);
+        bottomRow.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button btnRecopy = makeButton("إعادة نسخ التقرير", LauncherConfig.COL_CARD, LauncherConfig.COL_CYAN, LauncherConfig.COL_BORDER, true);
+        btnRecopy.setTextSize(11.5f);
+        btnRecopy.setOnClickListener(v -> copyReportToClipboard(report, false));
+        LinearLayout.LayoutParams rcLp = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        rcLp.leftMargin = dp(6);
+        bottomRow.addView(btnRecopy, rcLp);
+
+        Button btnClose = makeButton("إغلاق", LauncherConfig.COL_CARD_INNER, LauncherConfig.COL_MUTED, LauncherConfig.COL_BORDER, true);
+        btnClose.setTextSize(11.5f);
+        btnClose.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams clLp = new LinearLayout.LayoutParams(0, dp(40), 0.7f);
+        clLp.rightMargin = dp(6);
+        bottomRow.addView(btnClose, clLp);
+
+        root.addView(bottomRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        dialog.show();
     }
 
     private void showNeedsFirstLaunchDialog() {

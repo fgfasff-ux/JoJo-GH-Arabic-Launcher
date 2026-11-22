@@ -43,7 +43,12 @@ public final class GameProfileRegistry {
                     LauncherConfig.STAT_LINES,
                     LauncherConfig.STAT_SCOPE,
                     LauncherConfig.STAT_COMPAT,
-                    LauncherConfig.STAT_SAFETY
+                    LauncherConfig.STAT_SAFETY,
+                    "Wanda Cinemas Games",
+                    "4.5 ★",
+                    "+1,000,000",
+                    "كوّن فريق أحلامك من 6 أجيال من أبطال جوجو في لعبة تقمص الأدوار الرسمية ثلاثية الأبعاد بقدرات الستاند الاستراتيجية.",
+                    15967
             ));
 
             // 2) Dragon Ball Legends — قريباً (جاهز بمحرك ASSET_REPLACE لإظهار قابلية التوسع)
@@ -69,7 +74,12 @@ public final class GameProfileRegistry {
                     "محرك Unity / il2cpp جاهز",
                     "استبدال أصول files/assets/",
                     "نسخ احتياطي واستعادة تلقائية",
-                    "قريباً في R.D.AV Hub"
+                    "قريباً في R.D.AV Hub",
+                    "Bandai Namco Entertainment",
+                    "4.5 ★",
+                    "+100,000,000",
+                    "لعبة قتال بطاقات ثلاثية الأبعاد لعالم دراغون بول — قيد التجهيز عبر محرك ASSET_REPLACE.",
+                    0
             ));
 
             cachedProfiles = Collections.unmodifiableList(list);

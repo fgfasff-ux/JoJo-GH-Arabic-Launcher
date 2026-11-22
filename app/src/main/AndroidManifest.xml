@@ -15,6 +15,7 @@
     <queries>
         <package android:name="com.wanda.jojo.gp.global" />
         <package android:name="com.bandainamcoent.dblegends_ww" />
+        <package android:name="com.instagram.android" />
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.google.android.documentsui" />
         <package android:name="com.android.documentsui" />
