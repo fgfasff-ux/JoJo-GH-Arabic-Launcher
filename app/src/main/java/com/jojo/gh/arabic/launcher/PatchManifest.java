@@ -49,6 +49,57 @@ public final class PatchManifest {
             long targetGameVersionCode,
             String expectedLangOrigMd5,
             long expectedLangOrigSize,
+            long expectedForceConfSize,
+            String releaseDate,
+            String changelog,
+            String downloadUrl,
+            String sha256,
+            long sizeBytes,
+            String targetSubpath
+    ) {
+        this(
+                patchVersion, gameVersion, targetGameVersionCode,
+                expectedLangOrigMd5, expectedLangOrigSize,
+                "", "", 0L,
+                expectedForceConfSize,
+                releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
+                "public",
+                "", "", "", "", "", "", "", 0, 0, "", ""
+        );
+    }
+
+    public PatchManifest(
+            String patchVersion,
+            String gameVersion,
+            long targetGameVersionCode,
+            String expectedLangOrigMd5,
+            long expectedLangOrigSize,
+            long expectedForceConfSize,
+            String releaseDate,
+            String changelog,
+            String downloadUrl,
+            String sha256,
+            long sizeBytes,
+            String targetSubpath,
+            String channel
+    ) {
+        this(
+                patchVersion, gameVersion, targetGameVersionCode,
+                expectedLangOrigMd5, expectedLangOrigSize,
+                "", "", 0L,
+                expectedForceConfSize,
+                releaseDate, changelog, downloadUrl, sha256, sizeBytes, targetSubpath,
+                channel,
+                "", "", "", "", "", "", "", 0, 0, "", ""
+        );
+    }
+
+    public PatchManifest(
+            String patchVersion,
+            String gameVersion,
+            long targetGameVersionCode,
+            String expectedLangOrigMd5,
+            long expectedLangOrigSize,
             String expectedPatchedLangMd5,
             String expectedPatchedLangSha256,
             long expectedPatchedLangSize,

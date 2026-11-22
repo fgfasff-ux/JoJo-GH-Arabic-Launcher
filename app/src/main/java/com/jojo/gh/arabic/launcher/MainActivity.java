@@ -1768,7 +1768,7 @@ public class MainActivity extends Activity {
         addModalDetailRow(container, "إصدار التعريب الحالي", currentPatchVer, LauncherConfig.COL_TEXT, false);
         addModalDetailRow(container, "إصدار اللعبة المتوافق", "v" + gameVer + " (versionCode #" + gameVc + ")", LauncherConfig.COL_SUCCESS, false);
         addModalDetailRow(container, "تاريخ التحديث", releaseDate, LauncherConfig.COL_CYAN, false);
-        addModalDetailRow(container, "محرك الحقن المستخدم", engineName + " (" + activeProfile.patchStrategy.arabicLabel + ")", LauncherConfig.COL_TEXT, false);
+        addModalDetailRow(container, "محرك الحقن المستخدم", engineName + " (" + activeProfile.patchStrategy.displayName + ")", LauncherConfig.COL_TEXT, false);
         addModalDetailRow(container, "بصمة التحقق (MD5 لملف اللغة)", md5Hash, LauncherConfig.COL_GOLD, true);
         addModalDetailRow(container, "بصمة التحقق (SHA-256 للحزمة)", sha256Hash, LauncherConfig.COL_CYAN, true);
 
