@@ -3489,7 +3489,7 @@ public class MainActivity extends Activity {
                 }
             } catch (Throwable ignored) {
             }
-            if (!"jojo_gh".equals(activeProfile.id)) {
+            if (!"jojo_golden_hymn".equals(activeProfile.id)) {
                 return -1L;
             }
         }
@@ -3510,7 +3510,7 @@ public class MainActivity extends Activity {
             PatchManifest manifestOpt,
             boolean autoRestoreIfMismatch
     ) {
-        boolean isJoJo = activeProfile == null || "jojo_gh".equals(activeProfile.id);
+        boolean isJoJo = activeProfile == null || "jojo_golden_hymn".equals(activeProfile.id);
         String activePkg = activeProfile != null ? activeProfile.packageName : "";
         long targetVc = manifestOpt != null
                 ? manifestOpt.targetGameVersionCode
@@ -3639,7 +3639,7 @@ public class MainActivity extends Activity {
                 }
             } catch (Throwable ignored) {
             }
-            if (!"jojo_gh".equals(activeProfile.id)) {
+            if (!"jojo_golden_hymn".equals(activeProfile.id)) {
                 return null;
             }
         }
@@ -3661,7 +3661,7 @@ public class MainActivity extends Activity {
             if (isPackageInstalled(activePkg.trim())) {
                 return true;
             }
-            if (!"jojo_gh".equals(activeProfile.id)) {
+            if (!"jojo_golden_hymn".equals(activeProfile.id)) {
                 return false;
             }
         }
@@ -4921,7 +4921,7 @@ public class MainActivity extends Activity {
                 startActivity(launch);
                 return;
             }
-            if (!"jojo_gh".equals(activeProfile.id)) {
+            if (!"jojo_golden_hymn".equals(activeProfile.id)) {
                 Toast.makeText(this, "لعبة " + activeProfile.title + " غير مثبّتة على الجهاز.", Toast.LENGTH_SHORT).show();
                 return;
             }
