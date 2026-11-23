@@ -915,9 +915,9 @@ public class MainActivity extends Activity {
         studioCard.addView(topPills, tpLp);
         root.addView(studioCard, makeCardLp());
 
-        // فاصل ذهبي رفيع بمعيّن في المنتصف + عنوان قسم مكتبة الألعاب
+        // فاصل ذهبي رفيع بمعيّن في المنتصف + عنوان قسم مكتبة التعريبات
         root.addView(makeGoldDiamondDivider(), makeDividerLp());
-        root.addView(makeEditorialSectionHeader("مكتبة الألعاب المتوفرة"), makeSectionHdrLp());
+        root.addView(makeEditorialSectionHeader("مكتبة التعريبات"), makeSectionHdrLp());
 
         // شبكة بطاقات الألعاب الفنية العريضة (عمودان)
         homeCardsGrid = new LinearLayout(this);
@@ -949,18 +949,18 @@ public class MainActivity extends Activity {
             rowLp.bottomMargin = dp(10);
 
             View card1 = createHomeGameCard(profiles.get(i));
-            LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, dp(138), 1f);
+            LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
             lp1.leftMargin = dp(4);
             row.addView(card1, lp1);
 
             if (i + 1 < profiles.size()) {
                 View card2 = createHomeGameCard(profiles.get(i + 1));
-                LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, dp(138), 1f);
+                LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
                 lp2.rightMargin = dp(4);
                 row.addView(card2, lp2);
             } else {
                 View spacer = new View(this);
-                LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, dp(138), 1f);
+                LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, 1, 1f);
                 spLp.rightMargin = dp(4);
                 row.addView(spacer, spLp);
             }
@@ -1010,8 +1010,18 @@ public class MainActivity extends Activity {
             statusFg = LauncherConfig.COL_CYAN;
         }
 
-        // الغلاف الخارجي بإطار ذهبي رفيع (1dp) وزوايا نظيفة (10dp)
-        FrameLayout outer = new FrameLayout(this);
+        // الغلاف الخارجي بنسبة عرض إلى ارتفاع 16:9 (مستطيل أفقي عريض مطابق للصورة المرجعية) مع إطار ذهبي رفيع
+        FrameLayout outer = new FrameLayout(this) {
+            @Override
+            protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+                int w = MeasureSpec.getSize(widthMeasureSpec);
+                int h = Math.round(w * 9f / 16f);
+                super.onMeasure(
+                        MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
+                        MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY)
+                );
+            }
+        };
         GradientDrawable frameBg = new GradientDrawable();
         frameBg.setColor(LauncherConfig.COL_CARD_INNER);
         frameBg.setCornerRadius(dp(10));
@@ -1031,7 +1041,7 @@ public class MainActivity extends Activity {
         FrameLayout inner = new FrameLayout(this);
         clipRounded(inner, dp(9));
 
-        // 1) الصورة الفنية العريضة تغطي كامل البطاقة (تتحدّث ديناميكياً من banner_url عند توفره)
+        // 1) الصورة الفنية العريضة تغطي كامل البطاقة بنظافة تامة دون أي أيقونة زاوية
         ImageView ivArt = new ImageView(this);
         Bitmap cachedBanner = !profile.comingSoon ? GameIconCache.loadCachedBannerBitmap(this, profile.id) : null;
         if (cachedBanner != null) {
@@ -1043,65 +1053,39 @@ public class MainActivity extends Activity {
         inner.addView(ivArt, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // 2) تدرج داكن سفلي أنيق لإبراز النص والكبسولة
+        // 2) تدرج داكن سفلي ناعم لإبراز اسم اللعبة وكبسولة الحالة بوضوح تام
         View bottomScrim = new View(this);
         GradientDrawable scrimBg = new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{Color.parseColor("#0007121A"), Color.parseColor("#4D07121A"), Color.parseColor("#F0050E15")}
+                new int[]{Color.parseColor("#0007121A"), Color.parseColor("#3807121A"), Color.parseColor("#EB050E15")}
         );
         bottomScrim.setBackground(scrimBg);
         inner.addView(bottomScrim, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // 3) أيقونة اللعبة البارزة في الزاوية (54dp × 54dp بإطار ذهبي رفيع وزوايا مستديرة 12dp)
-        Bitmap cachedBmp = GameIconCache.loadCachedBitmap(this, profile.id);
-        if (!profile.comingSoon && (cachedBmp != null || profile.iconRes != 0)) {
-            FrameLayout miniIconWrap = new FrameLayout(this);
-            GradientDrawable miBg = new GradientDrawable();
-            miBg.setColor(Color.parseColor("#E607121A"));
-            miBg.setCornerRadius(dp(12));
-            miBg.setStroke(dp(1), LauncherConfig.COL_BORDER_GOLD);
-            miniIconWrap.setBackground(miBg);
-            miniIconWrap.setPadding(dp(2), dp(2), dp(2), dp(2));
-
-            ImageView ivMini = new ImageView(this);
-            if (cachedBmp != null) {
-                ivMini.setImageBitmap(cachedBmp);
-            } else {
-                ivMini.setImageResource(profile.iconRes);
-            }
-            ivMini.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            clipRounded(ivMini, dp(10));
-            miniIconWrap.addView(ivMini, new FrameLayout.LayoutParams(dp(50), dp(50)));
-
-            FrameLayout.LayoutParams miLp = new FrameLayout.LayoutParams(dp(54), dp(54), Gravity.TOP | Gravity.LEFT);
-            miLp.setMargins(dp(8), dp(8), dp(8), dp(8));
-            inner.addView(miniIconWrap, miLp);
-        }
-
-        // 4) الشريط السفلي (LTR صريح: اسم اللعبة على اليسار + كبسولة الحالة المتوهجة على اليمين)
+        // 3) الشريط السفلي (LTR صريح: اسم اللعبة كاملاً على اليسار + كبسولة الحالة الأنيقة على اليمين)
         LinearLayout bottomRow = new LinearLayout(this);
         bottomRow.setOrientation(LinearLayout.HORIZONTAL);
         bottomRow.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         bottomRow.setGravity(Gravity.CENTER_VERTICAL);
-        bottomRow.setPadding(dp(8), dp(6), dp(8), dp(7));
+        bottomRow.setPadding(dp(7), dp(5), dp(7), dp(6));
 
         String shortTitle = profile.id.equals("jojo_golden_hymn") ? "JoJo: Golden Hymn" : profile.title;
-        TextView tvTitle = makeText(shortTitle, 10.6f, Color.WHITE, true);
+        TextView tvTitle = makeText(shortTitle, 9.8f, Color.WHITE, true);
         tvTitle.setSingleLine(true);
         tvTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        tvTitle.setShadowLayer(4f, 0f, 1f, Color.parseColor("#CC000000"));
+        tvTitle.setShadowLayer(4f, 0f, 1f, Color.parseColor("#D9000000"));
         LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        tLp.rightMargin = dp(5);
+        tLp.rightMargin = dp(4);
         bottomRow.addView(tvTitle, tLp);
 
-        TextView tvStatus = makeText(statusText, 8.8f, statusFg, true);
+        TextView tvStatus = makeText(statusText, 8.2f, statusFg, true);
         tvStatus.setSingleLine(true);
         tvStatus.setGravity(Gravity.CENTER);
-        tvStatus.setPadding(dp(7), dp(2), dp(7), dp(2));
+        tvStatus.setPadding(dp(6), dp(2), dp(6), dp(2));
         GradientDrawable stBg = new GradientDrawable();
         stBg.setColor(statusBg);
-        stBg.setCornerRadius(dp(9));
+        stBg.setCornerRadius(dp(8));
         stBg.setStroke(dp(1), statusFg);
         tvStatus.setBackground(stBg);
         bottomRow.addView(tvStatus, new LinearLayout.LayoutParams(
