@@ -9,6 +9,7 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * نموذج بيانات يمثّل ملف manifest.json أو manifest_beta.json المستضاف على GitHub Releases،
@@ -63,6 +64,7 @@ public final class PatchManifest {
     public final int statsTranslatedStrings;
     public final int statsTotalRows;
     public final String statsEngine;
+    public final String statsPatchSizeMb;
     public final boolean securitySafe;
     public final boolean securityMaintenance;
     public final String securityMessage;
@@ -92,7 +94,7 @@ public final class PatchManifest {
                 "public",
                 "", "", "", "", "", "",
                 "", "", "", "", "", "", Collections.emptyList(), "",
-                "", "", "", "", "", "", 0, 0, "",
+                "", "", "", "", "", "", 0, 0, "", "",
                 true, false, "", "", ""
         );
     }
@@ -121,7 +123,7 @@ public final class PatchManifest {
                 channel,
                 "", "", "", "", "", "",
                 "", "", "", "", "", "", Collections.emptyList(), "",
-                "", "", "", "", "", "", 0, 0, "",
+                "", "", "", "", "", "", 0, 0, "", "",
                 true, false, "", "", ""
         );
     }
@@ -168,6 +170,7 @@ public final class PatchManifest {
             int statsTranslatedStrings,
             int statsTotalRows,
             String statsEngine,
+            String statsPatchSizeMb,
             boolean securitySafe,
             boolean securityMaintenance,
             String securityMessage,
@@ -229,6 +232,7 @@ public final class PatchManifest {
         this.statsTranslatedStrings = Math.max(0, statsTranslatedStrings);
         this.statsTotalRows = Math.max(0, statsTotalRows);
         this.statsEngine = statsEngine != null ? statsEngine.trim() : "";
+        this.statsPatchSizeMb = statsPatchSizeMb != null ? statsPatchSizeMb.trim() : "";
         this.securitySafe = securitySafe;
         this.securityMaintenance = securityMaintenance;
         this.securityMessage = securityMessage != null ? securityMessage.trim() : "";
@@ -250,9 +254,24 @@ public final class PatchManifest {
                 heroEyebrow, displayTitle, heroTagline, badgeLabel, socialLabel, socialUrl,
                 screenshotsUrls, screenshotsHash,
                 storeTitle, storeSummary, storeDeveloper, storeScore, storeInstalls, storeContentRating,
-                statsTranslatedStrings, statsTotalRows, statsEngine,
+                statsTranslatedStrings, statsTotalRows, statsEngine, statsPatchSizeMb,
                 securitySafe, securityMaintenance, securityMessage, feedbackWebhookUrl, rawJson
         );
+    }
+
+    public String getDisplayPatchSizeMb() {
+        if (!statsPatchSizeMb.isEmpty()) {
+            return statsPatchSizeMb;
+        }
+        if (sizeBytes > 0L) {
+            double mb = sizeBytes / (1024.0 * 1024.0);
+            if (mb >= 0.1) {
+                return String.format(Locale.US, "%.1f MB", mb);
+            }
+            long kb = Math.max(1L, sizeBytes / 1024L);
+            return kb + " KB";
+        }
+        return "";
     }
 
     public String getEffectiveBannerImageUrl() {
@@ -327,6 +346,7 @@ public final class PatchManifest {
         int statsTranslated = statsObj != null ? statsObj.optInt("translated_strings", 0) : 0;
         int statsTotal = statsObj != null ? statsObj.optInt("total_rows", 0) : 0;
         String statsEngine = statsObj != null ? statsObj.optString("engine", "") : "";
+        String statsPatchSizeMb = statsObj != null ? statsObj.optString("patch_size_mb", "") : "";
 
         boolean secSafe = sgObj == null || sgObj.optBoolean("safe", true);
         boolean secMaint = sgObj != null && sgObj.optBoolean("maintenance", false);
@@ -400,6 +420,7 @@ public final class PatchManifest {
                 statsTranslated,
                 statsTotal,
                 statsEngine,
+                statsPatchSizeMb,
                 secSafe,
                 secMaint,
                 secMsg,

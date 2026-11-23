@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
+import android.util.LruCache;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -13,11 +14,16 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * مدير التخزين الذكي بالبصمة (Smart Hash-Based Caching — Disk + Memory Cache):
@@ -33,7 +39,23 @@ public final class GameIconCache {
     private static final int MAX_ICON_BYTES = 4 * 1024 * 1024;    // 4 MB
     private static final int MAX_BANNER_BYTES = 8 * 1024 * 1024;  // 8 MB
     private static final int MAX_VIDEO_BYTES = 24 * 1024 * 1024;  // 24 MB
+    private static final long MAX_DISK_CACHE_BYTES = 100L * 1024 * 1024; // 100 MB سعة الكاش الدائم على القرص
+    private static final String STANDARD_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
     private static final Map<String, Bitmap> MEMORY_CACHE = new ConcurrentHashMap<>();
+    private static final ExecutorService SHOT_DOWNLOAD_POOL = Executors.newFixedThreadPool(4);
+    private static final LruCache<String, Bitmap> THUMB_MEMORY_CACHE;
+
+    static {
+        int maxKb = (int) (Runtime.getRuntime().maxMemory() / 1024L);
+        int cacheKb = Math.max(12 * 1024, Math.min(48 * 1024, maxKb / 8));
+        THUMB_MEMORY_CACHE = new LruCache<String, Bitmap>(cacheKb) {
+            @Override
+            protected int sizeOf(String key, Bitmap value) {
+                return value == null ? 0 : Math.max(1, value.getByteCount() / 1024);
+            }
+        };
+    }
 
     public interface Callback {
         void onIconReady(Bitmap bitmap);
@@ -222,9 +244,25 @@ public final class GameIconCache {
     // 4) معرض لقطات الشاشة من متجر Google Play (screenshots_urls + screenshots_hash)
     // -------------------------------------------------------------------------
 
+    public static Bitmap getMemoryCachedThumbnail(File file, int maxDimPx) {
+        if (file == null) {
+            return null;
+        }
+        String key = file.getAbsolutePath() + "@" + maxDimPx + ":" + file.lastModified();
+        Bitmap mem = THUMB_MEMORY_CACHE.get(key);
+        return (mem != null && !mem.isRecycled()) ? mem : null;
+    }
+
     public static Bitmap decodeScaledBitmap(File file, int maxDimPx) {
         if (file == null || !file.isFile() || file.length() < 16) {
             return null;
+        }
+        String cacheKey = file.getAbsolutePath() + "@" + maxDimPx + ":" + file.lastModified();
+        if (maxDimPx <= 600) {
+            Bitmap mem = THUMB_MEMORY_CACHE.get(cacheKey);
+            if (mem != null && !mem.isRecycled()) {
+                return mem;
+            }
         }
         try {
             BitmapFactory.Options bounds = new BitmapFactory.Options();
@@ -243,9 +281,43 @@ public final class GameIconCache {
             BitmapFactory.Options opts = new BitmapFactory.Options();
             opts.inSampleSize = sample;
             opts.inPreferredConfig = Bitmap.Config.RGB_565;
-            return BitmapFactory.decodeFile(file.getAbsolutePath(), opts);
+            Bitmap decoded = BitmapFactory.decodeFile(file.getAbsolutePath(), opts);
+            if (decoded != null && maxDimPx <= 600) {
+                THUMB_MEMORY_CACHE.put(cacheKey, decoded);
+            }
+            return decoded;
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    private static void enforceDiskCacheBudget(Context context) {
+        try {
+            File dir = new File(context.getFilesDir(), DIR_NAME);
+            File[] files = dir.listFiles();
+            if (files == null || files.length == 0) {
+                return;
+            }
+            long total = 0L;
+            for (File f : files) {
+                if (f.isFile()) {
+                    total += f.length();
+                }
+            }
+            if (total <= MAX_DISK_CACHE_BYTES) {
+                return;
+            }
+            Arrays.sort(files, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+            for (File f : files) {
+                if (total <= MAX_DISK_CACHE_BYTES * 85 / 100) {
+                    break;
+                }
+                if (f.isFile() && f.getName().endsWith(".tmp")) {
+                    total -= f.length();
+                    f.delete();
+                }
+            }
+        } catch (Throwable ignored) {
         }
     }
 
@@ -305,10 +377,13 @@ public final class GameIconCache {
                 String savedToken = prefs.getString("token_" + metaKey, "");
                 int savedCount = prefs.getInt("shots_count_" + gameId, 0);
 
-                // إذا تطابقت بصمة screenshots_hash وكانت جميع الصور محفوظة محلياً، استخدمها فوراً بلا تحميل!
+                // إذا لم تتغير بصمة screenshots_hash وكانت جميع الصور محفوظة محلياً، أعدها فوراً من الكاش دون أي اتصال!
                 if (expectedToken.equals(savedToken) && savedCount == cleanUrls.size()) {
                     List<File> cached = loadCachedScreenshotFiles(appCtx, gameId);
                     if (cached.size() == cleanUrls.size()) {
+                        for (File cf : cached) {
+                            decodeScaledBitmap(cf, 520); // تسخين كاش الذاكرة فوراً
+                        }
                         if (callback != null && mainHandler != null) {
                             mainHandler.post(() -> callback.onScreenshotsReady(cached));
                         }
@@ -316,41 +391,60 @@ public final class GameIconCache {
                     }
                 }
 
-                // تغيّرت البصمة أو لقطات الشاشة لأول مرة -> حمّل الصور الجديدة وحدّث الكاش بالبصمة
-                List<File> freshFiles = new ArrayList<>();
+                // تحميل متوازٍ فائق السرعة (4 خيوط معاً) وكتابة مباشرة للقرص بدون إعادة ضغط بطيئة!
+                final File[] results = new File[cleanUrls.size()];
+                final CountDownLatch latch = new CountDownLatch(cleanUrls.size());
                 for (int i = 0; i < cleanUrls.size(); i++) {
-                    String shotUrl = cleanUrls.get(i);
-                    File outFile = getCacheFile(appCtx, "shot_" + gameId + "_" + i, ".jpg");
-                    try {
-                        byte[] bytes = downloadBytesFollowingRedirects(shotUrl, MAX_BANNER_BYTES);
-                        if (bytes == null || bytes.length < 64) {
-                            continue;
+                    final int idx = i;
+                    final String shotUrl = cleanUrls.get(i);
+                    SHOT_DOWNLOAD_POOL.execute(() -> {
+                        try {
+                            File outFile = getCacheFile(appCtx, "shot_" + gameId + "_" + idx, ".jpg");
+                            byte[] bytes = downloadBytesFollowingRedirects(shotUrl, MAX_BANNER_BYTES);
+                            if (bytes != null && bytes.length >= 64) {
+                                BitmapFactory.Options chk = new BitmapFactory.Options();
+                                chk.inJustDecodeBounds = true;
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.length, chk);
+                                if (chk.outWidth > 0 && chk.outHeight > 0) {
+                                    File tmp = new File(outFile.getParentFile(), outFile.getName() + ".tmp");
+                                    try (FileOutputStream fos = new FileOutputStream(tmp)) {
+                                        fos.write(bytes);
+                                        fos.flush();
+                                    }
+                                    if (outFile.exists()) {
+                                        outFile.delete();
+                                    }
+                                    if (!tmp.renameTo(outFile)) {
+                                        try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                                            fos.write(bytes);
+                                            fos.flush();
+                                        }
+                                        tmp.delete();
+                                    }
+                                    if (outFile.isFile() && outFile.length() > 64) {
+                                        decodeScaledBitmap(outFile, 520);
+                                        results[idx] = outFile;
+                                    }
+                                }
+                            }
+                        } catch (Throwable ignored) {
+                        } finally {
+                            latch.countDown();
                         }
-                        Bitmap decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
-                        if (decoded == null) {
-                            continue;
-                        }
-                        File tmp = new File(outFile.getParentFile(), outFile.getName() + ".tmp");
-                        try (FileOutputStream fos = new FileOutputStream(tmp)) {
-                            decoded.compress(Bitmap.CompressFormat.JPEG, 90, fos);
-                            fos.flush();
-                        }
-                        decoded.recycle();
-                        if (outFile.exists()) {
-                            outFile.delete();
-                        }
-                        if (!tmp.renameTo(outFile)) {
-                            tmp.delete();
-                        }
-                        if (outFile.isFile() && outFile.length() > 64) {
-                            freshFiles.add(outFile);
-                        }
-                    } catch (Throwable ignored) {
+                    });
+                }
+
+                latch.await(25, TimeUnit.SECONDS);
+
+                List<File> freshFiles = new ArrayList<>();
+                for (File rf : results) {
+                    if (rf != null && rf.isFile() && rf.length() > 64) {
+                        freshFiles.add(rf);
                     }
                 }
 
                 if (!freshFiles.isEmpty()) {
-                    // تنظيف أي صور قديمة زائدة بعد التحديث
+                    // تنظيف أي صور قديمة زائدة فقط إذا تغيّر عدد اللقطات بعد تحديث البصمة
                     for (int j = freshFiles.size(); j < Math.max(savedCount, 12); j++) {
                         File stale = getCacheFile(appCtx, "shot_" + gameId + "_" + j, ".jpg");
                         if (stale.exists()) {
@@ -361,6 +455,7 @@ public final class GameIconCache {
                             .putString("token_" + metaKey, expectedToken)
                             .putInt("shots_count_" + gameId, freshFiles.size())
                             .apply();
+                    enforceDiskCacheBudget(appCtx);
                     if (callback != null && mainHandler != null) {
                         final List<File> ready = new ArrayList<>(freshFiles);
                         mainHandler.post(() -> callback.onScreenshotsReady(ready));
@@ -492,10 +587,11 @@ public final class GameIconCache {
             HttpURLConnection conn = (HttpURLConnection) new URL(currentUrl).openConnection();
             conn.setInstanceFollowRedirects(false);
             conn.setUseCaches(false);
-            conn.setConnectTimeout(12000);
-            conn.setReadTimeout(25000);
-            conn.setRequestProperty("Cache-Control", "no-cache");
-            conn.setRequestProperty("User-Agent", "RDAV-MultiGame-Hub/" + LauncherConfig.APP_VERSION);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(20000);
+            conn.setRequestProperty("User-Agent", STANDARD_USER_AGENT);
+            conn.setRequestProperty("Accept", "image/webp,image/*,*/*;q=0.8");
+            conn.setRequestProperty("Connection", "keep-alive");
             try {
                 int code = conn.getResponseCode();
                 if (code == HttpURLConnection.HTTP_MOVED_PERM

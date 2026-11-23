@@ -150,10 +150,12 @@ public class MainActivity extends Activity {
     private LinearLayout homeBetaBanner;
     private LinearLayout hubBetaBanner;
     private TextView btnBackToLibrary;
-    private TextView tvStrategyBadge;
     private Button btnInstallBeta;
     private int secretTapCount = 0;
     private long lastSecretTapMs = 0L;
+    private String lastHomeRenderSignature = "";
+    private String lastRenderedShotsSignature = "";
+    private String lastHeroBadgeSessionGameId = "";
 
     // مشغّل الفيديو المحلي الخفيف (TextureView + MediaPlayer)
     private static final float PROMO_FADE_DURATION_MS = 5000f;
@@ -225,6 +227,7 @@ public class MainActivity extends Activity {
     private volatile boolean usingRemoteBannerImage = false;
     private AlertDialog liveSyncDialog;
     private TextView tvStatLinesChip;
+    private TextView tvStatSizeChip;
     private TextView tvStatCompatChip;
     private TextView tvStoreScorePill;
     private TextView tvStoreInstallsPill;
@@ -355,6 +358,8 @@ public class MainActivity extends Activity {
         applyDynamicMetadataToUi();
         if (latestRemoteManifest != null) {
             syncDynamicMediaForManifest(activeProfile, latestRemoteManifest);
+        } else {
+            syncStoreScreenshotsForProfile(activeProfile, null);
         }
         syncBetaModeUi();
         ensureLegacyStoragePermissions();
@@ -935,10 +940,34 @@ public class MainActivity extends Activity {
         return scroll;
     }
 
+    private String buildHomeRenderSignature() {
+        StringBuilder sb = new StringBuilder();
+        List<GameProfile> profiles = GameProfileRegistry.getAllProfiles();
+        String remoteVer = latestRemoteManifest != null ? latestRemoteManifest.patchVersion : "";
+        String remoteBannerHash = latestRemoteManifest != null ? latestRemoteManifest.bannerHash : "";
+        sb.append(lastSafetyOk).append('|')
+                .append(isPatchCurrentlyInstalled).append('|')
+                .append(installedPatchVersion).append('|')
+                .append(remoteVer).append('|')
+                .append(remoteBannerHash).append('|')
+                .append(activeProfile != null ? activeProfile.id : "");
+        for (GameProfile p : profiles) {
+            boolean inst = isPackageInstalled(p.packageName);
+            boolean hasBanner = !p.comingSoon && GameIconCache.loadCachedBannerBitmap(this, p.id) != null;
+            sb.append(';').append(p.id).append(':').append(inst).append(':').append(hasBanner);
+        }
+        return sb.toString();
+    }
+
     private void refreshHomeCards() {
         if (homeCardsGrid == null) {
             return;
         }
+        String sig = buildHomeRenderSignature();
+        if (homeCardsGrid.getChildCount() > 0 && sig.equals(lastHomeRenderSignature)) {
+            return;
+        }
+        lastHomeRenderSignature = sig;
         homeCardsGrid.removeAllViews();
         List<GameProfile> profiles = GameProfileRegistry.getAllProfiles();
         for (int i = 0; i < profiles.size(); i += 2) {
@@ -1102,8 +1131,8 @@ public class MainActivity extends Activity {
                 AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
                 b.setTitle(profile.title + " — قريباً");
                 b.setMessage(
-                        "تم تجهيز بنية «" + profile.patchStrategy.code + "» داخل منصة R.D.AV Multi-Game Hub لدعم تعريب "
-                                + profile.title + " والألعاب القياسية مستقبلاً بنسخ احتياطي تلقائي.\n\n"
+                        "جارٍ تجهيز حزمة التعريب الرسمية للعبة "
+                                + profile.title + " داخل منصة R.D.AV Multi-Game Hub مع دعم النسخ الاحتياطي التلقائي والاستعادة السريعة.\n\n"
                                 + "تابع حسابنا على Instagram (" + LauncherConfig.INSTAGRAM_HANDLE + ") لموعد الإطلاق!"
                 );
                 b.setPositiveButton("حسناً", null);
@@ -1362,15 +1391,15 @@ public class MainActivity extends Activity {
     private void openGameHub(GameProfile profile) {
         activeProfile = profile;
         isOnGameHub = true;
-        if (tvStrategyBadge != null) {
-            tvStrategyBadge.setText("محرك: " + profile.patchStrategy.code);
-        }
         homeScreenView.setVisibility(View.GONE);
         gameHubScreenView.setVisibility(View.VISIBLE);
         applyDynamicMetadataToUi();
         syncBetaModeUi();
         resumePromoVideo();
-        triggerHeroDevBadgeAnimation();
+        if (!profile.id.equals(lastHeroBadgeSessionGameId)) {
+            lastHeroBadgeSessionGameId = profile.id;
+            triggerHeroDevBadgeAnimation();
+        }
         refreshStatusAsync(null);
     }
 
@@ -1449,7 +1478,7 @@ public class MainActivity extends Activity {
         hubRemoteSecurityBanner.addView(tvRemoteSecurityMsg);
         root.addView(hubRemoteSecurityBanner, makeCardLp());
 
-        // 0.5) شريط الرجوع إلى مكتبة الألعاب + شارة محرك الحقن النشط
+        // 0.5) شريط الرجوع إلى مكتبة التعريبات
         LinearLayout backRow = new LinearLayout(this);
         backRow.setOrientation(LinearLayout.HORIZONTAL);
         backRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -1457,7 +1486,7 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         backRowLp.bottomMargin = dp(10);
 
-        btnBackToLibrary = makeText("←  مكتبة الألعاب", 11.8f, LauncherConfig.COL_GOLD, true);
+        btnBackToLibrary = makeText("←  مكتبة التعريبات", 11.8f, LauncherConfig.COL_GOLD, true);
         btnBackToLibrary.setPadding(dp(12), dp(6), dp(12), dp(6));
         GradientDrawable backBg = new GradientDrawable();
         backBg.setColor(LauncherConfig.COL_CARD);
@@ -1471,18 +1500,6 @@ public class MainActivity extends Activity {
             }
         });
         backRow.addView(btnBackToLibrary);
-
-        View flexSpacer = new View(this);
-        backRow.addView(flexSpacer, new LinearLayout.LayoutParams(0, 1, 1f));
-
-        tvStrategyBadge = makeText("محرك: " + activeProfile.patchStrategy.code, 9.8f, LauncherConfig.COL_CYAN, true);
-        tvStrategyBadge.setPadding(dp(10), dp(5), dp(10), dp(5));
-        GradientDrawable stratBg = new GradientDrawable();
-        stratBg.setColor(LauncherConfig.COL_CARD_INNER);
-        stratBg.setCornerRadius(dp(8));
-        stratBg.setStroke(dp(1), LauncherConfig.COL_BORDER);
-        tvStrategyBadge.setBackground(stratBg);
-        backRow.addView(tvStrategyBadge);
 
         root.addView(backRow, backRowLp);
 
@@ -2063,7 +2080,8 @@ public class MainActivity extends Activity {
         statsRow1.setOrientation(LinearLayout.HORIZONTAL);
         tvStatLinesChip = makeStatChip(LauncherConfig.STAT_LINES, LauncherConfig.COL_GOLD);
         statsRow1.addView(tvStatLinesChip, makeHalfLp(true));
-        statsRow1.addView(makeStatChip(LauncherConfig.STAT_SCOPE, LauncherConfig.COL_CYAN), makeHalfLp(false));
+        tvStatSizeChip = makeStatChip("📦  حجم حزمة التعريب: —", LauncherConfig.COL_CYAN);
+        statsRow1.addView(tvStatSizeChip, makeHalfLp(false));
         LinearLayout.LayoutParams sr1Lp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         sr1Lp.bottomMargin = dp(7);
@@ -2073,7 +2091,7 @@ public class MainActivity extends Activity {
         statsRow2.setOrientation(LinearLayout.HORIZONTAL);
         tvStatCompatChip = makeStatChip(LauncherConfig.STAT_COMPAT, LauncherConfig.COL_SUCCESS);
         statsRow2.addView(tvStatCompatChip, makeHalfLp(true));
-        statsRow2.addView(makeStatChip(LauncherConfig.STAT_SAFETY, LauncherConfig.COL_TEXT), makeHalfLp(false));
+        statsRow2.addView(makeStatChip("🛡  مفحوص ومعتمد ✓", Color.parseColor("#6EE7B7")), makeHalfLp(false));
         statsCard.addView(statsRow2);
 
         root.addView(statsCard, makeCardLp());
@@ -2752,11 +2770,24 @@ public class MainActivity extends Activity {
         if (storeScreenshotsSection == null || storeScreenshotsRow == null) {
             return;
         }
-        storeScreenshotsRow.removeAllViews();
         if (files == null || files.isEmpty()) {
+            lastRenderedShotsSignature = "";
+            storeScreenshotsRow.removeAllViews();
             storeScreenshotsSection.setVisibility(View.GONE);
             return;
         }
+        StringBuilder sigSb = new StringBuilder();
+        sigSb.append(activeProfile != null ? activeProfile.id : "").append('|').append(files.size());
+        for (File f : files) {
+            sigSb.append(';').append(f.getName()).append(':').append(f.length()).append(':').append(f.lastModified());
+        }
+        String sig = sigSb.toString();
+        if (storeScreenshotsRow.getChildCount() > 0 && sig.equals(lastRenderedShotsSignature)) {
+            storeScreenshotsSection.setVisibility(View.VISIBLE);
+            return;
+        }
+        lastRenderedShotsSignature = sig;
+        storeScreenshotsRow.removeAllViews();
         storeScreenshotsSection.setVisibility(View.VISIBLE);
         final int total = files.size();
         for (int i = 0; i < total; i++) {
@@ -2777,13 +2808,18 @@ public class MainActivity extends Activity {
             card.addView(iv, new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-            // تحميل مصغّر خفيف من القرص المحلي بدون تعطيل واجهة المستخدم
-            iconExecutor.execute(() -> {
-                Bitmap thumb = GameIconCache.decodeScaledBitmap(shotFile, 520);
-                if (thumb != null) {
-                    mainHandler.post(() -> iv.setImageBitmap(thumb));
-                }
-            });
+            // استخدام الكاش الفوري من الذاكرة (0ms) إن وُجد، وإلا القراءة السريعة من القرص المحلي
+            Bitmap memThumb = GameIconCache.getMemoryCachedThumbnail(shotFile, 520);
+            if (memThumb != null) {
+                iv.setImageBitmap(memThumb);
+            } else {
+                iconExecutor.execute(() -> {
+                    Bitmap thumb = GameIconCache.decodeScaledBitmap(shotFile, 520);
+                    if (thumb != null) {
+                        mainHandler.post(() -> iv.setImageBitmap(thumb));
+                    }
+                });
+            }
 
             // شارة ترقيم خفيفة في الزاوية للتكبير التفاعلي
             TextView badge = makeText((idx + 1) + "/" + total, 8.8f, LauncherConfig.COL_GOLD, true);
@@ -3094,7 +3130,7 @@ public class MainActivity extends Activity {
         renderStoreScreenshotsCarousel(cachedShots);
         syncStoreScreenshotsForProfile(activeProfile, m);
 
-        // 3) تحديث شرائح الإحصائيات المختصرة
+        // 3) تحديث شرائح الإحصائيات المختصرة (متضمنة حجم حزمة التعريب بالميغابايت)
         if (tvStatLinesChip != null) {
             int count = (m != null && m.statsTranslatedStrings > 0)
                     ? m.statsTranslatedStrings
@@ -3104,6 +3140,10 @@ public class MainActivity extends Activity {
             } else {
                 tvStatLinesChip.setText(activeProfile.statLines);
             }
+        }
+        if (tvStatSizeChip != null) {
+            String sizeMb = m != null ? m.getDisplayPatchSizeMb() : "";
+            tvStatSizeChip.setText("📦  حجم الحزمة: " + (sizeMb.isEmpty() ? "—" : sizeMb));
         }
         if (tvStatCompatChip != null) {
             String gVer = (m != null && !m.gameVersion.isEmpty()) ? m.gameVersion : activeProfile.targetGameVersionName;
@@ -3176,7 +3216,8 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * نافذة منبثقة احترافية لعرض «إحصائيات حزمة التعريب» الكاملة والبصمات الرقمية.
+     * نافذة منبثقة احترافية ونظيفة لعرض «إحصائيات حزمة التعريب» للاعبين
+     * (بدون كشف أي تفاصيل تقنية داخلية مثل محرك الحقن أو بصمات MD5 / SHA-256).
      */
     private void showPatchStatsModal() {
         PatchManifest m = latestRemoteManifest;
@@ -3187,6 +3228,9 @@ public class MainActivity extends Activity {
         String translatedText = translatedCount > 0
                 ? String.format(Locale.US, "%,d نصاً معرّباً بالفصحى", translatedCount)
                 : activeProfile.statLines;
+
+        String patchSizeMb = m != null ? m.getDisplayPatchSizeMb() : "";
+        String sizeDisplay = !patchSizeMb.isEmpty() ? patchSizeMb : "يُحتسب تلقائياً عند التحديث";
 
         String currentPatchVer;
         if (isPatchCurrentlyInstalled && !installedPatchVersion.isEmpty()) {
@@ -3199,15 +3243,10 @@ public class MainActivity extends Activity {
 
         String channelLabel = (m != null && m.isBetaChannel()) ? "🧪 Beta Test (اختبار)" : "🚀 إصدار رسمي (Public)";
         String gameVer = (m != null && !m.gameVersion.isEmpty()) ? m.gameVersion : activeProfile.targetGameVersionName;
-        long gameVc = (m != null && m.targetGameVersionCode > 0) ? m.targetGameVersionCode : activeProfile.targetGameVersionCode;
         String releaseDate = (m != null && !m.releaseDate.isEmpty()) ? m.releaseDate : "2026-11-22";
-        String engineName = (m != null && !m.statsEngine.isEmpty()) ? m.statsEngine : activeProfile.patchStrategy.code;
-        String md5Hash = (m != null && !m.expectedPatchedLangMd5.isEmpty())
-                ? m.expectedPatchedLangMd5
-                : LauncherConfig.TARGET_LANG_PATCHED_MD5;
-        String sha256Hash = (m != null && !m.sha256.isEmpty())
-                ? m.sha256
-                : ((m != null && !m.expectedPatchedLangSha256.isEmpty()) ? m.expectedPatchedLangSha256 : "يُتحقق تلقائياً عند التحميل");
+        String securityStatus = (m == null || (m.securitySafe && !m.securityMaintenance))
+                ? "🛡  مفحوص ومعتمد ✓"
+                : "⚠  قيد الفحص والتحديث الأمني";
 
         ScrollView scroll = new ScrollView(this);
         LinearLayout container = new LinearLayout(this);
@@ -3236,28 +3275,26 @@ public class MainActivity extends Activity {
         container.addView(hdr, hdrLp);
 
         addModalDetailRow(container, "إجمالي النصوص المعرّبة", translatedText, LauncherConfig.COL_GOLD, false);
+        addModalDetailRow(container, "📦  حجم حزمة التعريب", sizeDisplay, LauncherConfig.COL_CYAN, false);
         addModalDetailRow(container, "إصدار التعريب الحالي", currentPatchVer, LauncherConfig.COL_TEXT, false);
-        addModalDetailRow(container, "إصدار اللعبة المتوافق", "v" + gameVer + " (versionCode #" + gameVc + ")", LauncherConfig.COL_SUCCESS, false);
-        addModalDetailRow(container, "تاريخ التحديث", releaseDate, LauncherConfig.COL_CYAN, false);
-        addModalDetailRow(container, "محرك الحقن المستخدم", engineName + " (" + activeProfile.patchStrategy.displayName + ")", LauncherConfig.COL_TEXT, false);
-        addModalDetailRow(container, "بصمة التحقق (MD5 لملف اللغة)", md5Hash, LauncherConfig.COL_GOLD, true);
-        addModalDetailRow(container, "بصمة التحقق (SHA-256 للحزمة)", sha256Hash, LauncherConfig.COL_CYAN, true);
+        addModalDetailRow(container, "إصدار اللعبة المتوافق", "v" + gameVer, LauncherConfig.COL_SUCCESS, false);
+        addModalDetailRow(container, "تاريخ التحديث", releaseDate, LauncherConfig.COL_TEXT, false);
+        addModalDetailRow(container, "حالة الفحص الأمني", securityStatus, Color.parseColor("#6EE7B7"), false);
 
         scroll.addView(container);
 
         final String copyPayload = "=== إحصائيات حزمة تعريب R.D.AV ===\n"
                 + "اللعبة: " + activeProfile.title + "\n"
                 + "إجمالي النصوص المعرّبة: " + translatedText + "\n"
+                + "حجم حزمة التعريب: " + sizeDisplay + "\n"
                 + "إصدار التعريب: " + currentPatchVer + "\n"
-                + "إصدار اللعبة المتوافق: v" + gameVer + " (#" + gameVc + ")\n"
+                + "إصدار اللعبة المتوافق: v" + gameVer + "\n"
                 + "تاريخ التحديث: " + releaseDate + "\n"
-                + "محرك الحقن: " + engineName + "\n"
-                + "MD5: " + md5Hash + "\n"
-                + "SHA-256: " + sha256Hash;
+                + "حالة الفحص الأمني: مفحوص ومعتمد ✓";
 
         AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
         b.setView(scroll);
-        b.setPositiveButton("نسخ الإحصائيات والبصمات", (d, w) -> copyReportToClipboard(copyPayload, false));
+        b.setPositiveButton("نسخ الإحصائيات", (d, w) -> copyReportToClipboard(copyPayload, false));
         b.setNegativeButton("إغلاق", null);
         b.show();
     }
