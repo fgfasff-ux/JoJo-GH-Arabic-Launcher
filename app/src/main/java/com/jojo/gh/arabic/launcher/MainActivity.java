@@ -737,6 +737,16 @@ public class MainActivity extends Activity {
         return bar;
     }
 
+    private boolean isProfileAccessible(GameProfile profile) {
+        if (profile == null) {
+            return false;
+        }
+        if (!profile.comingSoon) {
+            return true;
+        }
+        return BetaModeManager.isBetaEnabled(this) && !profile.githubRepo.isEmpty();
+    }
+
     private void syncBetaModeUi() {
         boolean enabled = BetaModeManager.isBetaEnabled(this);
         int vis = enabled ? View.VISIBLE : View.GONE;
@@ -749,6 +759,8 @@ public class MainActivity extends Activity {
         if (btnInstallBeta != null) {
             btnInstallBeta.setVisibility(vis);
         }
+        lastHomeRenderSignature = "";
+        refreshHomeCards();
     }
 
     private void handleSecretBrandTap() {
@@ -946,6 +958,7 @@ public class MainActivity extends Activity {
         String remoteVer = latestRemoteManifest != null ? latestRemoteManifest.patchVersion : "";
         String remoteBannerHash = latestRemoteManifest != null ? latestRemoteManifest.bannerHash : "";
         sb.append(lastSafetyOk).append('|')
+                .append(BetaModeManager.isBetaEnabled(this)).append('|')
                 .append(isPatchCurrentlyInstalled).append('|')
                 .append(installedPatchVersion).append('|')
                 .append(remoteVer).append('|')
@@ -953,7 +966,7 @@ public class MainActivity extends Activity {
                 .append(activeProfile != null ? activeProfile.id : "");
         for (GameProfile p : profiles) {
             boolean inst = isPackageInstalled(p.packageName);
-            boolean hasBanner = !p.comingSoon && GameIconCache.loadCachedBannerBitmap(this, p.id) != null;
+            boolean hasBanner = isProfileAccessible(p) && GameIconCache.loadCachedBannerBitmap(this, p.id) != null;
             sb.append(';').append(p.id).append(':').append(inst).append(':').append(hasBanner);
         }
         return sb.toString();
@@ -1008,10 +1021,15 @@ public class MainActivity extends Activity {
         int statusBg;
         int statusFg;
 
-        if (profile.comingSoon) {
+        boolean accessible = isProfileAccessible(profile);
+        if (!accessible) {
             statusText = "قريباً";
             statusBg = Color.parseColor("#CC2A1A08");
             statusFg = LauncherConfig.COL_GOLD;
+        } else if (profile.comingSoon) {
+            statusText = installed ? "🧪 Beta" : "🧪 Beta";
+            statusBg = Color.parseColor("#CC2E1065");
+            statusFg = Color.parseColor("#E9D5FF");
         } else if (!installed) {
             statusText = "غير مثبتة";
             statusBg = Color.parseColor("#CC3B0D1D");
@@ -1072,7 +1090,7 @@ public class MainActivity extends Activity {
 
         // 1) الصورة الفنية العريضة تغطي كامل البطاقة بنظافة تامة دون أي أيقونة زاوية
         ImageView ivArt = new ImageView(this);
-        Bitmap cachedBanner = !profile.comingSoon ? GameIconCache.loadCachedBannerBitmap(this, profile.id) : null;
+        Bitmap cachedBanner = accessible ? GameIconCache.loadCachedBannerBitmap(this, profile.id) : null;
         if (cachedBanner != null) {
             ivArt.setImageBitmap(cachedBanner);
         } else {
@@ -1127,7 +1145,7 @@ public class MainActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         outer.setOnClickListener(v -> {
-            if (profile.comingSoon) {
+            if (!isProfileAccessible(profile)) {
                 AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
                 b.setTitle(profile.title + " — قريباً");
                 b.setMessage(
@@ -1191,7 +1209,7 @@ public class MainActivity extends Activity {
     }
 
     private void enterGameWithOnlineSecurityGate(GameProfile profile) {
-        if (profile == null || profile.comingSoon) {
+        if (!isProfileAccessible(profile)) {
             return;
         }
         if (!isInternetConnected()) {
@@ -1201,8 +1219,21 @@ public class MainActivity extends Activity {
         showLiveSyncLoadingDialog(profile);
         worker.execute(() -> {
             try {
-                // جلب ملف manifest.json الحي من GitHub مع تجاوز الكاش بالكامل (no-cache)
-                PatchManifest liveManifest = PatchDownloader.fetchManifestForProfile(profile);
+                // جلب ملف manifest الحي من GitHub (وعند فتح لعبة قيد الاختبار في Beta Mode، يُجلب manifest_beta.json مباشرة!)
+                PatchManifest liveManifest;
+                if (BetaModeManager.isBetaEnabled(this) && profile.comingSoon) {
+                    liveManifest = PatchDownloader.fetchBetaManifest(profile);
+                } else {
+                    try {
+                        liveManifest = PatchDownloader.fetchManifestForProfile(profile);
+                    } catch (Throwable pubErr) {
+                        if (BetaModeManager.isBetaEnabled(this)) {
+                            liveManifest = PatchDownloader.fetchBetaManifest(profile);
+                        } else {
+                            throw pubErr;
+                        }
+                    }
+                }
                 liveManifest.saveToCache(this, profile.id);
                 latestRemoteManifest = liveManifest;
 
@@ -3049,7 +3080,7 @@ public class MainActivity extends Activity {
             if (cachedBanner != null) {
                 ivHubPoster.setImageBitmap(cachedBanner);
             } else {
-                ivHubPoster.setImageResource(R.drawable.bg_promo_poster);
+                ivHubPoster.setImageResource(activeProfile.bannerRes != 0 ? activeProfile.bannerRes : R.drawable.bg_promo_poster);
             }
         }
         if (!remoteVideoUrl.isEmpty()) {
@@ -3059,8 +3090,8 @@ public class MainActivity extends Activity {
             if (promoTextureView != null) {
                 promoTextureView.setVisibility(View.VISIBLE);
             }
-        } else if (cachedBanner != null) {
-            // عند رفع صورة بانر مخصصة من أداة الـ PC، نُبرزها فوراً بدون تغطيتها بالفيديو القديم المدمج
+        } else if (cachedBanner != null || activeProfile.promoVideoRes == 0) {
+            // عند رفع صورة بانر مخصصة أو إذا كانت اللعبة لا تملك فيديو ترويجي مدمج، نُبرز البانر بدون تشغيل فيديو جوجو
             activeRemoteHeroVideoFile = null;
             usingRemoteBannerImage = true;
             pausePromoVideo();
@@ -3087,9 +3118,12 @@ public class MainActivity extends Activity {
                     : activeProfile.title);
         }
         if (tvHubSubtitle != null) {
+            String fallbackSubtitle = (activeProfile.subtitle != null && !activeProfile.subtitle.isEmpty())
+                    ? activeProfile.subtitle
+                    : "تحديث تعريب جوجو: الترنيمة الذهبية — للأندرويد";
             tvHubSubtitle.setText((m != null && !m.heroTagline.isEmpty())
                     ? m.heroTagline
-                    : "تحديث تعريب جوجو: الترنيمة الذهبية — للأندرويد");
+                    : fallbackSubtitle);
         }
         if (tvHubBadgeLabel != null) {
             tvHubBadgeLabel.setText((m != null && !m.badgeLabel.isEmpty())
@@ -3446,6 +3480,19 @@ public class MainActivity extends Activity {
 
     private long getInstalledGameVersionCode() {
         PackageManager pm = getPackageManager();
+        String activePkg = activeProfile != null ? activeProfile.packageName : "";
+        if (activePkg != null && !activePkg.trim().isEmpty()) {
+            try {
+                PackageInfo info = pm.getPackageInfo(activePkg.trim(), 0);
+                if (info != null) {
+                    return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+                }
+            } catch (Throwable ignored) {
+            }
+            if (!"jojo_gh".equals(activeProfile.id)) {
+                return -1L;
+            }
+        }
         for (String pkg : LauncherConfig.GAME_PACKAGES) {
             try {
                 PackageInfo info = pm.getPackageInfo(pkg, 0);
@@ -3463,18 +3510,27 @@ public class MainActivity extends Activity {
             PatchManifest manifestOpt,
             boolean autoRestoreIfMismatch
     ) {
+        boolean isJoJo = activeProfile == null || "jojo_gh".equals(activeProfile.id);
+        String activePkg = activeProfile != null ? activeProfile.packageName : "";
         long targetVc = manifestOpt != null
                 ? manifestOpt.targetGameVersionCode
-                : LauncherConfig.TARGET_GAME_VERSION_CODE;
+                : (activeProfile != null && activeProfile.targetGameVersionCode > 0
+                ? activeProfile.targetGameVersionCode
+                : LauncherConfig.TARGET_GAME_VERSION_CODE);
         long expForceConf = manifestOpt != null
                 ? manifestOpt.expectedForceConfSize
-                : LauncherConfig.TARGET_INDEX_ORIG_SIZE;
+                : (isJoJo ? LauncherConfig.TARGET_INDEX_ORIG_SIZE : 0L);
         long expLangSize = manifestOpt != null
                 ? manifestOpt.expectedLangOrigSize
-                : LauncherConfig.TARGET_LANG_ORIG_SIZE;
+                : (isJoJo ? LauncherConfig.TARGET_LANG_ORIG_SIZE : 0L);
         String expLangMd5 = manifestOpt != null
                 ? manifestOpt.expectedLangOrigMd5
-                : LauncherConfig.TARGET_LANG_ORIG_MD5;
+                : (isJoJo ? LauncherConfig.TARGET_LANG_ORIG_MD5 : "");
+        String targetVerName = (manifestOpt != null && !manifestOpt.gameVersion.isEmpty())
+                ? manifestOpt.gameVersion
+                : (activeProfile != null && activeProfile.targetGameVersionName != null && !activeProfile.targetGameVersionName.isEmpty()
+                ? activeProfile.targetGameVersionName
+                : LauncherConfig.TARGET_GAME_VERSION_NAME);
 
         long installedVc = getInstalledGameVersionCode();
         String installedVerName = getInstalledGameVersion();
@@ -3485,7 +3541,7 @@ public class MainActivity extends Activity {
         if (installedVc > 0 && targetVc > 0 && installedVc != targetVc) {
             mismatchReason = "إصدار اللعبة المثبّت (v" + (installedVerName != null ? installedVerName : "?")
                     + " / code=" + installedVc + ") يختلف عن الإصدار المدعوم للتعريب (v"
-                    + (manifestOpt != null ? manifestOpt.gameVersion : LauncherConfig.TARGET_GAME_VERSION_NAME)
+                    + targetVerName
                     + " / code=" + targetVc + ").";
         }
 
@@ -3496,11 +3552,12 @@ public class MainActivity extends Activity {
                         "CHECK_SAFETY\t" + getHintDir().getAbsolutePath()
                                 + "\t" + expForceConf
                                 + "\t" + expLangSize
-                                + "\t" + expLangMd5,
+                                + "\t" + expLangMd5
+                                + "\t" + activePkg,
                         15000
                 );
             } else if (mode == AccessMode.DIRECT_FS) {
-                resp = ShellBridgeServer.checkDataSafety(getHintDir(), expForceConf, expLangSize, expLangMd5);
+                resp = ShellBridgeServer.checkDataSafety(getHintDir(), expForceConf, expLangSize, expLangMd5, activePkg);
             } else if (mode == AccessMode.SAF_GRANTED) {
                 Uri tree = SafHelper.findGrantedTreeUri(this);
                 if (tree != null) {
@@ -3553,10 +3610,11 @@ public class MainActivity extends Activity {
     }
 
     private String executeRestoreSync(AccessMode mode, ShellBridgeServer.ProgressListener listener) {
+        String activePkg = activeProfile != null ? activeProfile.packageName : "";
         if (mode == AccessMode.BRIDGE_ACTIVE) {
-            return sendBridgeCommandWithProgress("APPLY_RESTORE\t" + getHintDir().getAbsolutePath(), 120000, listener);
+            return sendBridgeCommandWithProgress("APPLY_RESTORE\t" + getHintDir().getAbsolutePath() + "\t" + activePkg, 120000, listener);
         } else if (mode == AccessMode.DIRECT_FS) {
-            return ShellBridgeServer.applyRestore(getHintDir(), listener);
+            return ShellBridgeServer.applyRestore(getHintDir(), activePkg, listener);
         } else {
             Uri tree = SafHelper.findGrantedTreeUri(this);
             if (tree == null) {
@@ -3572,6 +3630,19 @@ public class MainActivity extends Activity {
 
     private String getInstalledGameVersion() {
         PackageManager pm = getPackageManager();
+        String activePkg = activeProfile != null ? activeProfile.packageName : "";
+        if (activePkg != null && !activePkg.trim().isEmpty()) {
+            try {
+                PackageInfo info = pm.getPackageInfo(activePkg.trim(), 0);
+                if (info != null && info.versionName != null) {
+                    return info.versionName;
+                }
+            } catch (Throwable ignored) {
+            }
+            if (!"jojo_gh".equals(activeProfile.id)) {
+                return null;
+            }
+        }
         for (String pkg : LauncherConfig.GAME_PACKAGES) {
             try {
                 PackageInfo info = pm.getPackageInfo(pkg, 0);
@@ -3585,6 +3656,15 @@ public class MainActivity extends Activity {
     }
 
     private boolean isAnyGameInstalled() {
+        String activePkg = activeProfile != null ? activeProfile.packageName : "";
+        if (activePkg != null && !activePkg.trim().isEmpty()) {
+            if (isPackageInstalled(activePkg.trim())) {
+                return true;
+            }
+            if (!"jojo_gh".equals(activeProfile.id)) {
+                return false;
+            }
+        }
         for (String pkg : LauncherConfig.GAME_PACKAGES) {
             if (isPackageInstalled(pkg)) {
                 return true;
@@ -3751,11 +3831,12 @@ public class MainActivity extends Activity {
             long gameVc = getInstalledGameVersionCode();
             AccessMode mode = detectAccessMode();
 
+            String activePkg = activeProfile != null ? activeProfile.packageName : "";
             String statusResp = null;
             if (mode == AccessMode.BRIDGE_ACTIVE) {
-                statusResp = sendBridgeCommand("STATUS\t" + getHintDir().getAbsolutePath(), 3000);
+                statusResp = sendBridgeCommand("STATUS\t" + getHintDir().getAbsolutePath() + "\t" + activePkg, 3000);
             } else if (mode == AccessMode.DIRECT_FS) {
-                statusResp = ShellBridgeServer.getStatus(getHintDir());
+                statusResp = ShellBridgeServer.getStatus(getHintDir(), activePkg);
             } else if (mode == AccessMode.SAF_GRANTED) {
                 Uri tree = SafHelper.findGrantedTreeUri(this);
                 if (tree != null) {
@@ -4151,7 +4232,10 @@ public class MainActivity extends Activity {
         }
         worker.execute(() -> {
             try {
-                PatchManifest manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
+                boolean useBeta = activeProfile.comingSoon && BetaModeManager.isBetaEnabled(this);
+                PatchManifest manifest = useBeta
+                        ? PatchDownloader.fetchBetaManifest(activeProfile)
+                        : PatchDownloader.fetchManifestForProfile(activeProfile);
                 manifest.saveToCache(this, activeProfile.id);
                 latestRemoteManifest = manifest;
                 syncDynamicMediaForManifest(activeProfile, manifest);
@@ -4201,7 +4285,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!isAnyGameInstalled()) {
-            Toast.makeText(this, "يرجى تثبيت لعبة JoJo's Bizarre Adventure: Golden Hymn أولاً على الجهاز.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "يرجى تثبيت لعبة " + activeProfile.title + " أولاً على الجهاز.", Toast.LENGTH_LONG).show();
             return;
         }
         if (!LauncherConfig.isOnlineUrlConfigured()) {
@@ -4226,7 +4310,10 @@ public class MainActivity extends Activity {
                 ShellBridgeServer.deleteRecursive(workDir);
                 stageDir.mkdirs();
 
-                PatchManifest manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
+                boolean useBeta = activeProfile.comingSoon && BetaModeManager.isBetaEnabled(this);
+                PatchManifest manifest = useBeta
+                        ? PatchDownloader.fetchBetaManifest(activeProfile)
+                        : PatchDownloader.fetchManifestForProfile(activeProfile);
                 manifest.saveToCache(this, activeProfile.id);
                 latestRemoteManifest = manifest;
                 syncDynamicMediaForManifest(activeProfile, manifest);
@@ -4273,7 +4360,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!isAnyGameInstalled()) {
-            Toast.makeText(this, "يرجى تثبيت لعبة JoJo's Bizarre Adventure: Golden Hymn أولاً على الجهاز.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "يرجى تثبيت لعبة " + activeProfile.title + " أولاً على الجهاز.", Toast.LENGTH_LONG).show();
             return;
         }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -4320,7 +4407,7 @@ public class MainActivity extends Activity {
 
                 PatchDownloader.extractZipUri(this, zipUri, stageDir, this::updateProgress, 20, 58);
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
-                executeInstallFromStage(mode, effectiveStage, "v3-full", LauncherConfig.GAME_TARGET_SUBPATH);
+                executeInstallFromStage(mode, effectiveStage, "local-zip", activeProfile.patchStrategy.resolveDefaultTargetSubpath(""));
             } catch (Throwable t) {
                 String err = readableError(t);
                 showErrorState("فشل تثبيت الحزمة: " + err);
@@ -4421,16 +4508,17 @@ public class MainActivity extends Activity {
 
         ShellBridgeServer.ProgressListener listener = this::updateProgress;
         String normSubpath = strategy.resolveDefaultTargetSubpath(targetSubpath);
+        String activePkg = activeProfile != null ? activeProfile.packageName : "";
         String result;
 
         if (mode == AccessMode.BRIDGE_ACTIVE) {
             result = sendBridgeCommandWithProgress(
-                    "APPLY_INSTALL\t" + stageDir.getAbsolutePath() + "\t" + patchVersion + "\t" + normSubpath,
+                    "APPLY_INSTALL\t" + stageDir.getAbsolutePath() + "\t" + patchVersion + "\t" + normSubpath + "\t" + activePkg,
                     180000,
                     listener
             );
         } else if (mode == AccessMode.DIRECT_FS) {
-            result = ShellBridgeServer.applyInstall(stageDir, patchVersion, normSubpath, listener);
+            result = ShellBridgeServer.applyInstall(stageDir, patchVersion, normSubpath, activePkg, listener);
             if (result == null || (!result.startsWith("OK|") && !result.contains("NEEDS_FIRST_LAUNCH"))) {
                 Uri tree = SafHelper.findGrantedTreeUri(this);
                 if (tree != null) {
@@ -4447,7 +4535,7 @@ public class MainActivity extends Activity {
 
         if (result != null && result.contains("NEEDS_FIRST_LAUNCH")) {
             mainHandler.post(() -> {
-                tvStatusText.setText("يرجى تشغيل JoJo: Golden Hymn مرة واحدة أولاً لإنشاء مجلد البيانات ثم إعادة المحاولة.");
+                tvStatusText.setText("يرجى تشغيل " + activeProfile.title + " مرة واحدة أولاً لإنشاء مجلد البيانات ثم إعادة المحاولة.");
                 tvProgressPercent.setText("تنبيه");
                 showNeedsFirstLaunchDialog();
             });
@@ -4461,7 +4549,7 @@ public class MainActivity extends Activity {
         String[] parts = result.split("\\|");
         String fileCount = parts.length >= 4 ? parts[3] : "";
         updateProgress(100, "اكتمل تثبيت تعريب R.D.AV بنجاح (" + fileCount + " ملف) مع حفظ النسخة الاحتياطية ✓");
-        mainHandler.post(() -> Toast.makeText(this, "تم تثبيت تعريب JoJo: Golden Hymn بنجاح ✓", Toast.LENGTH_LONG).show());
+        mainHandler.post(() -> Toast.makeText(this, "تم تثبيت تعريب " + activeProfile.title + " بنجاح ✓", Toast.LENGTH_LONG).show());
     }
 
     private void confirmAndRestore() {
@@ -4470,7 +4558,7 @@ public class MainActivity extends Activity {
         }
         AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
         b.setTitle("استعادة النسخة الأصلية");
-        b.setMessage("هل تريد إزالة التعريب واستعادة جميع ملفات JoJo: Golden Hymn الأصلية من النسخة الاحتياطية؟");
+        b.setMessage("هل تريد إزالة التعريب واستعادة جميع ملفات " + activeProfile.title + " الأصلية من النسخة الاحتياطية؟");
         b.setPositiveButton("نعم، استعادة الأصل", (d, w) -> runRestoreFlow());
         b.setNegativeButton("إلغاء", null);
         b.show();
@@ -4652,9 +4740,10 @@ public class MainActivity extends Activity {
 
                 if (mode == AccessMode.BRIDGE_ACTIVE || mode == AccessMode.DIRECT_FS) {
                     updateProgress(70, "جارٍ فحص سلامة ملفات اللعبة وبصمات MD5...");
+                    String activePkg = activeProfile != null ? activeProfile.packageName : "";
                     String resp = (mode == AccessMode.BRIDGE_ACTIVE)
-                            ? sendBridgeCommand("SCAN_DIAG\t" + getHintDir().getAbsolutePath(), 30000)
-                            : ShellBridgeServer.runDiagnosticScan(getHintDir());
+                            ? sendBridgeCommand("SCAN_DIAG\t" + getHintDir().getAbsolutePath() + "\t" + activePkg, 30000)
+                            : ShellBridgeServer.runDiagnosticScan(getHintDir(), activePkg);
                     if (resp != null && resp.startsWith("OK|")) {
                         fullReport.append(resp.substring(3).replace("\\n", "\n"));
                     } else {
@@ -4794,7 +4883,7 @@ public class MainActivity extends Activity {
     private void showNeedsFirstLaunchDialog() {
         AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
         b.setTitle("يلزم تشغيل اللعبة لمرة واحدة أولاً");
-        b.setMessage("لعبة JoJo: Golden Hymn مثبّتة، لكن مجلد بياناتها لم يُنشأ بالكامل بعد.\n\nشغّل اللعبة مرة واحدة واتركها تنشئ ملفاتها الأولية، ثم عد لهذا التطبيق واضغط تثبيت التعريب.");
+        b.setMessage("لعبة " + activeProfile.title + " مثبّتة، لكن مجلد بياناتها لم يُنشأ بالكامل بعد.\n\nشغّل اللعبة مرة واحدة واتركها تنشئ ملفاتها الأولية، ثم عد لهذا التطبيق واضغط تثبيت التعريب.");
         b.setPositiveButton("تشغيل اللعبة الآن", (d, w) -> launchGameDirect());
         b.setNegativeButton("حسناً", null);
         b.show();
@@ -4805,7 +4894,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!isAnyGameInstalled()) {
-            Toast.makeText(this, "لعبة JoJo: Golden Hymn غير مثبّتة على الجهاز.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "لعبة " + activeProfile.title + " غير مثبّتة على الجهاز.", Toast.LENGTH_SHORT).show();
             return;
         }
         worker.execute(() -> {
@@ -4824,6 +4913,19 @@ public class MainActivity extends Activity {
 
     private void launchGameDirect() {
         PackageManager pm = getPackageManager();
+        String activePkg = activeProfile != null ? activeProfile.packageName : "";
+        if (activePkg != null && !activePkg.trim().isEmpty()) {
+            Intent launch = pm.getLaunchIntentForPackage(activePkg.trim());
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(launch);
+                return;
+            }
+            if (!"jojo_gh".equals(activeProfile.id)) {
+                Toast.makeText(this, "لعبة " + activeProfile.title + " غير مثبّتة على الجهاز.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
         for (String pkg : LauncherConfig.GAME_PACKAGES) {
             Intent launch = pm.getLaunchIntentForPackage(pkg);
             if (launch != null) {
@@ -4832,7 +4934,7 @@ public class MainActivity extends Activity {
                 return;
             }
         }
-        Toast.makeText(this, "لعبة JoJo: Golden Hymn غير مثبّتة على الجهاز.", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "لعبة " + activeProfile.title + " غير مثبّتة على الجهاز.", Toast.LENGTH_SHORT).show();
     }
 
     // =========================================================================

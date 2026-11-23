@@ -72,7 +72,7 @@ public enum PatchStrategy {
             return norm;
         }
         if (this == ASSET_REPLACE) {
-            return "assets";
+            return "";
         }
         return LauncherConfig.normalizeSubpath(LauncherConfig.GAME_TARGET_SUBPATH);
     }

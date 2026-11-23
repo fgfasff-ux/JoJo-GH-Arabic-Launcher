@@ -103,12 +103,38 @@ public class ShellBridgeServer {
     }
 
     public static void stopGameSafely() {
+        stopGameSafely(null);
+    }
+
+    public static void stopGameSafely(String targetPackage) {
+        if (targetPackage != null && !targetPackage.trim().isEmpty()) {
+            try {
+                Runtime.getRuntime().exec(new String[]{"am", "force-stop", targetPackage.trim()}).waitFor();
+            } catch (Throwable ignored) {
+            }
+            return;
+        }
         for (String pkg : LauncherConfig.GAME_PACKAGES) {
             try {
                 Runtime.getRuntime().exec(new String[]{"am", "force-stop", pkg}).waitFor();
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    private static boolean isJoJoPackage(String pkg) {
+        return pkg == null || pkg.trim().isEmpty() || LauncherConfig.GAME_PACKAGE.equals(pkg.trim());
+    }
+
+    private static String resolveBackupDirName(String targetPackage) {
+        if (targetPackage != null && "com.bandainamcoent.dblegends_ww".equals(targetPackage.trim())) {
+            return ".dbl_arabic_backup";
+        }
+        if (isJoJoPackage(targetPackage)) {
+            return LauncherConfig.BACKUP_DIR_NAME;
+        }
+        String safe = targetPackage.trim().replaceAll("[^a-zA-Z0-9_]", "_");
+        return "." + safe + "_arabic_backup";
     }
 
     private static boolean canReadDir(File dir) {
@@ -123,6 +149,10 @@ public class ShellBridgeServer {
     }
 
     public static File resolveGameFilesDir(File hintDir) {
+        return resolveGameFilesDir(hintDir, null);
+    }
+
+    public static File resolveGameFilesDir(File hintDir, String explicitPackage) {
         String userId = "0";
         String hintBase = null;
 
@@ -141,6 +171,10 @@ public class ShellBridgeServer {
             }
         }
 
+        String[] packagesToCheck = (explicitPackage != null && !explicitPackage.trim().isEmpty())
+                ? new String[]{explicitPackage.trim()}
+                : LauncherConfig.GAME_PACKAGES;
+
         List<String> storageRoots = new ArrayList<>();
         storageRoots.add("/mnt/pass_through/" + userId + "/emulated/" + userId);
         storageRoots.add("/mnt/user/" + userId + "/emulated/" + userId);
@@ -155,18 +189,22 @@ public class ShellBridgeServer {
         storageRoots.add("/mnt/sdcard");
 
         for (String root : storageRoots) {
-            for (String pkg : LauncherConfig.GAME_PACKAGES) {
+            for (String pkg : packagesToCheck) {
                 File f = new File(root + "/Android/data/" + pkg + "/files");
-                if ((new File(f, LauncherConfig.DEFAULT_FORCE_SUBDIR).isDirectory()
+                boolean hasKnown = isJoJoPackage(pkg)
+                        ? (new File(f, LauncherConfig.DEFAULT_FORCE_SUBDIR).isDirectory()
                         || new File(f, LauncherConfig.DEFAULT_CONFIG_SUBDIR).isDirectory()
                         || new File(f, LauncherConfig.DEFAULT_AB_SUBDIR).isDirectory())
-                        && canReadDir(f)) {
+                        : (new File(f, "streamingassetbundles").isDirectory()
+                        || new File(f, "as").isDirectory()
+                        || new File(f, "il2cpp").isDirectory());
+                if (hasKnown && canReadDir(f)) {
                     return f;
                 }
             }
         }
         for (String root : storageRoots) {
-            for (String pkg : LauncherConfig.GAME_PACKAGES) {
+            for (String pkg : packagesToCheck) {
                 File f = new File(root + "/Android/data/" + pkg + "/files");
                 if (canReadDir(f)) {
                     String[] list = f.list();
@@ -177,7 +215,7 @@ public class ShellBridgeServer {
             }
         }
         for (String root : storageRoots) {
-            for (String pkg : LauncherConfig.GAME_PACKAGES) {
+            for (String pkg : packagesToCheck) {
                 File f = new File(root + "/Android/data/" + pkg + "/files");
                 if (f.isDirectory()) {
                     return f;
@@ -186,7 +224,8 @@ public class ShellBridgeServer {
         }
 
         String fallbackRoot = hintBase != null ? hintBase : "/storage/emulated/0";
-        return new File(fallbackRoot + "/Android/data/" + LauncherConfig.GAME_PACKAGE + "/files");
+        String fallbackPkg = packagesToCheck[0];
+        return new File(fallbackRoot + "/Android/data/" + fallbackPkg + "/files");
     }
 
     public static boolean canDirectReadWriteGameDir(File hintDir) {
@@ -240,13 +279,15 @@ public class ShellBridgeServer {
                         + "|rev=" + LauncherConfig.BRIDGE_REV);
             } else if ("STATUS".equals(cmd)) {
                 File hint = (parts.length > 2 && !parts[2].isEmpty()) ? new File(parts[2]) : null;
-                writer.println(getStatus(hint));
+                String pkg = (parts.length > 3 && !parts[3].isEmpty()) ? parts[3].trim() : null;
+                writer.println(getStatus(hint, pkg));
             } else if ("CHECK_SAFETY".equals(cmd)) {
                 File hint = (parts.length > 2 && !parts[2].isEmpty()) ? new File(parts[2]) : null;
                 long expForceConf = (parts.length > 3 && !parts[3].isEmpty()) ? Long.parseLong(parts[3]) : LauncherConfig.TARGET_INDEX_ORIG_SIZE;
                 long expLangSize = (parts.length > 4 && !parts[4].isEmpty()) ? Long.parseLong(parts[4]) : LauncherConfig.TARGET_LANG_ORIG_SIZE;
                 String expLangMd5 = (parts.length > 5 && !parts[5].isEmpty()) ? parts[5] : LauncherConfig.TARGET_LANG_ORIG_MD5;
-                writer.println(checkDataSafety(hint, expForceConf, expLangSize, expLangMd5));
+                String pkg = (parts.length > 6 && !parts[6].isEmpty()) ? parts[6].trim() : null;
+                writer.println(checkDataSafety(hint, expForceConf, expLangSize, expLangMd5, pkg));
             } else if ("APPLY_INSTALL".equals(cmd)) {
                 if (parts.length < 4) {
                     writer.println("ERR|BAD_ARGS");
@@ -255,23 +296,26 @@ public class ShellBridgeServer {
                 File stageDir = new File(parts[2]);
                 String patchVer = parts[3];
                 String subpath = parts.length > 4 ? parts[4] : "";
+                String pkg = (parts.length > 5 && !parts[5].isEmpty()) ? parts[5].trim() : null;
                 synchronized (MUTATE_LOCK) {
-                    stopGameSafely();
-                    String result = applyInstall(stageDir, patchVer, subpath,
+                    stopGameSafely(pkg);
+                    String result = applyInstall(stageDir, patchVer, subpath, pkg,
                             (pct, msg) -> writer.println("PROG|" + pct + "|" + msg));
                     writer.println(result);
                 }
             } else if ("APPLY_RESTORE".equals(cmd)) {
                 File hint = (parts.length > 2 && !parts[2].isEmpty()) ? new File(parts[2]) : null;
+                String pkg = (parts.length > 3 && !parts[3].isEmpty()) ? parts[3].trim() : null;
                 synchronized (MUTATE_LOCK) {
-                    stopGameSafely();
-                    String result = applyRestore(hint,
+                    stopGameSafely(pkg);
+                    String result = applyRestore(hint, pkg,
                             (pct, msg) -> writer.println("PROG|" + pct + "|" + msg));
                     writer.println(result);
                 }
             } else if ("SCAN_DIAG".equals(cmd)) {
                 File hint = (parts.length > 2 && !parts[2].isEmpty()) ? new File(parts[2]) : null;
-                writer.println(runDiagnosticScan(hint));
+                String pkg = (parts.length > 3 && !parts[3].isEmpty()) ? parts[3].trim() : null;
+                writer.println(runDiagnosticScan(hint, pkg));
             } else if ("STOP".equals(cmd)) {
                 writer.println("OK|BYE");
                 System.exit(0);
@@ -326,15 +370,35 @@ public class ShellBridgeServer {
      * - MISMATCH|<reason>|<hasBackup>|<detail>
      */
     public static String checkDataSafety(File hintDir, long expectedForceConfSize, long expectedLangSize, String expectedLangMd5) {
+        return checkDataSafety(hintDir, expectedForceConfSize, expectedLangSize, expectedLangMd5, null);
+    }
+
+    public static String checkDataSafety(File hintDir, long expectedForceConfSize, long expectedLangSize, String expectedLangMd5, String targetPackage) {
         try {
-            File filesDir = resolveGameFilesDir(hintDir);
+            File filesDir = resolveGameFilesDir(hintDir, targetPackage);
             if (!isGameInitialized(filesDir)) {
                 return "OK|NOT_READY|false|0||0";
             }
 
-            File backupDir = new File(filesDir, LauncherConfig.BACKUP_DIR_NAME);
+            String backupName = resolveBackupDirName(targetPackage);
+            File backupDir = new File(filesDir, backupName);
             File manifestFile = new File(backupDir, LauncherConfig.BACKUP_MANIFEST_FILE);
             boolean hasBackup = manifestFile.isFile();
+
+            // حارس الأمان متعدد الألعاب لـ Dragon Ball Legends وبقية ألعاب Unity Asset Replace
+            if (!isJoJoPackage(targetPackage)) {
+                if (hasBackup) {
+                    BackupManifest m = parseManifest(readText(manifestFile));
+                    for (BackupEntry entry : m.entries) {
+                        File target = new File(filesDir, entry.relPath);
+                        if (!target.isFile() || target.length() != entry.patchedSize) {
+                            return "MISMATCH|HOTUPDATE_OVERWROTE_LANG|true|تغيّر ملف " + entry.relPath + " بعد تحديث اللعبة";
+                        }
+                    }
+                    return "OK|SAFE|true|0||0";
+                }
+                return "OK|SAFE|false|0||0";
+            }
 
             File langFile = new File(filesDir, LauncherConfig.TARGET_LANG_REL_PATH);
             File forceConfFile = new File(filesDir, LauncherConfig.TARGET_INDEX_REL_PATH);
@@ -385,14 +449,18 @@ public class ShellBridgeServer {
     }
 
     public static String getStatus(File hintDir) {
+        return getStatus(hintDir, null);
+    }
+
+    public static String getStatus(File hintDir, String targetPackage) {
         try {
-            File filesDir = resolveGameFilesDir(hintDir);
+            File filesDir = resolveGameFilesDir(hintDir, targetPackage);
             boolean gameReady = isGameInitialized(filesDir);
             if (!gameReady) {
                 return "OK|false|false||0";
             }
 
-            File manifestFile = new File(new File(filesDir, LauncherConfig.BACKUP_DIR_NAME), LauncherConfig.BACKUP_MANIFEST_FILE);
+            File manifestFile = new File(new File(filesDir, resolveBackupDirName(targetPackage)), LauncherConfig.BACKUP_MANIFEST_FILE);
             if (!manifestFile.isFile()) {
                 return "OK|true|false||0";
             }
@@ -422,13 +490,23 @@ public class ShellBridgeServer {
             String targetSubpath,
             ProgressListener listener
     ) {
+        return applyInstall(stagingDir, patchVersion, targetSubpath, null, listener);
+    }
+
+    public static String applyInstall(
+            File stagingDir,
+            String patchVersion,
+            String targetSubpath,
+            String targetPackage,
+            ProgressListener listener
+    ) {
         try {
             if (listener != null) {
-                listener.onProgress(60, "جارٍ فحص مجلد لعبة JoJo: Golden Hymn...");
+                listener.onProgress(60, "جارٍ فحص مجلد بيانات اللعبة...");
             }
             grantShellStorageAccess();
 
-            File filesDir = resolveGameFilesDir(stagingDir);
+            File filesDir = resolveGameFilesDir(stagingDir, targetPackage);
             if (!isGameInitialized(filesDir)) {
                 return "ERR|NEEDS_FIRST_LAUNCH";
             }
@@ -443,12 +521,12 @@ public class ShellBridgeServer {
             }
             Collections.sort(stagedFiles, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
 
-            stopGameSafely();
+            stopGameSafely(targetPackage);
 
             String normSubpath = LauncherConfig.normalizeSubpath(targetSubpath);
             String stageBase = stagingDir.getCanonicalPath() + File.separator;
 
-            File backupDir = new File(filesDir, LauncherConfig.BACKUP_DIR_NAME);
+            File backupDir = new File(filesDir, resolveBackupDirName(targetPackage));
             File origDir = new File(backupDir, "orig");
             File manifestFile = new File(backupDir, LauncherConfig.BACKUP_MANIFEST_FILE);
             if (!origDir.exists()) {
@@ -556,10 +634,14 @@ public class ShellBridgeServer {
     }
 
     public static String applyRestore(File hintDir, ProgressListener listener) {
+        return applyRestore(hintDir, null, listener);
+    }
+
+    public static String applyRestore(File hintDir, String targetPackage, ProgressListener listener) {
         try {
-            stopGameSafely();
-            File filesDir = resolveGameFilesDir(hintDir);
-            File backupDir = new File(filesDir, LauncherConfig.BACKUP_DIR_NAME);
+            stopGameSafely(targetPackage);
+            File filesDir = resolveGameFilesDir(hintDir, targetPackage);
+            File backupDir = new File(filesDir, resolveBackupDirName(targetPackage));
             if (!backupDir.isDirectory()) {
                 return "OK|RESTORED|0";
             }
@@ -599,9 +681,13 @@ public class ShellBridgeServer {
     }
 
     public static String runDiagnosticScan(File hintDir) {
+        return runDiagnosticScan(hintDir, null);
+    }
+
+    public static String runDiagnosticScan(File hintDir, String targetPackage) {
         try {
             grantShellStorageAccess();
-            File filesDir = resolveGameFilesDir(hintDir);
+            File filesDir = resolveGameFilesDir(hintDir, targetPackage);
             StringBuilder sb = new StringBuilder();
             sb.append("UID=").append(Process.myUid())
                     .append(Process.myUid() == 0 ? " (Root)" : (Process.myUid() == 2000 ? " (Shizuku Shell)" : " (App)"))

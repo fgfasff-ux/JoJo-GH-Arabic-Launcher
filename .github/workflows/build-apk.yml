@@ -66,5 +66,5 @@ jobs:
       - name: Upload Signed Release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rdav-multi-game-hub-v3.3.0-release-apk
+          name: rdav-multi-game-hub-v3.4.0-release-apk
           path: app/build/outputs/apk/release/app-release.apk

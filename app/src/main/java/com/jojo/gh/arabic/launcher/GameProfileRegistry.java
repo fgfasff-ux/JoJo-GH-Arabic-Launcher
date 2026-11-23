@@ -61,35 +61,44 @@ public final class GameProfileRegistry {
                     "84a4242904daf457"
             ));
 
-            // 2) Dragon Ball Legends — قريباً (جاهز بمحرك ASSET_REPLACE لإظهار قابلية التوسع)
+            // 2) Dragon Ball Legends — جاهز بالكامل للاختبار السري (Beta Mode) وقريباً للجمهور العام
             list.add(new GameProfile(
                     "dragon_ball_legends",
                     "Dragon Ball Legends",
                     "دراغون بول ليجندز",
-                    "محرك ASSET_REPLACE جاهز — حزمة التعريب قيد الإعداد",
+                    "تحديث تعريب دراغون بول ليجندز — القوائم والقدرات والمهارات بالعربية الفصحى",
                     "com.bandainamcoent.dblegends_ww",
                     Color.parseColor("#F97316"),
                     Color.parseColor("#2563EB"),
                     R.drawable.ic_dbl_coming_soon,
                     R.drawable.bg_dbl_banner,
                     0,
-                    "",
-                    "",
-                    "",
+                    "fgfasff-ux/DBL-Arabic-Launcher",
+                    "https://github.com/fgfasff-ux/DBL-Arabic-Launcher/releases/latest/download/manifest.json",
+                    "https://github.com/fgfasff-ux/DBL-Arabic-Launcher/releases/download/v0.1.0-beta.1/manifest_beta.json",
                     PatchStrategy.ASSET_REPLACE,
-                    "قريباً",
-                    0L,
-                    "قريباً",
+                    "6.32.0",
+                    455L,
+                    "v0.1.0-beta.1",
                     true,
-                    "محرك Unity / il2cpp جاهز",
-                    "استبدال أصول files/assets/",
-                    "نسخ احتياطي واستعادة تلقائية",
-                    "قريباً في R.D.AV Hub",
-                    "Bandai Namco Entertainment",
-                    "4.5 ★",
-                    "+100,000,000",
-                    "لعبة قتال بطاقات ثلاثية الأبعاد لعالم دراغون بول — قيد التجهيز عبر محرك ASSET_REPLACE.",
-                    0
+                    "5,078 نصاً معرّباً (المرحلة الأولى)",
+                    "القوائم والإعدادات والقدرات والمهارات",
+                    "متوافق 100% مع الإصدار 6.32.0",
+                    "🛡 مفحوص ومعتمد ✓",
+                    "Bandai Namco Entertainment Inc.",
+                    "4.4 ★",
+                    "+50,000,000",
+                    "لعبة قتال أكشن ثلاثية الأبعاد مستوحاة من أنمي دراغون بول — نسخة اختبار Beta متاحة الآن للمطوّر.",
+                    5078,
+                    Arrays.asList(
+                            "https://play-lh.googleusercontent.com/tYOT4BBXdLB3BNrm2J5OPuvAfzI8mOOeZgjaWe0g28KvBGEZfy5zNFDaWs3dpzhtyl99UdohGZnJNp9O6mnvsg=w1280",
+                            "https://play-lh.googleusercontent.com/bfLlgVepSPyOmeYzv3I2OiUUh39F8F1FrbpBWjHoOvn9LWkxxjtPNY_VeFpdySjvARkQO12o0rCYldsQYTvN=w1280",
+                            "https://play-lh.googleusercontent.com/irI0arp-7j0J9KoPJ7Loj0e0U1uS5wSq8qHeb7NBrBaoREfiipmRkakRwkyTQ_38u_V2ByKu1HeTC8cjRAGv=w1280",
+                            "https://play-lh.googleusercontent.com/gbtaT0Xa3ATTJXr6AVSPqZS7ccZvPKwmchXYmDEulzQaTgz39ANcgy09qOWqvKy1xyBVZZQBoH7-EMoj8PWc3g=w1280",
+                            "https://play-lh.googleusercontent.com/pCKU5GWs4RX0McQasXHEWnecMyU-o9Rw_x-zuYcE1RHG1upMXC7zLkVg-J_0cSHKaLP9Inr60jaDx1F0f1zX=w1280",
+                            "https://play-lh.googleusercontent.com/-_OXA0ZqN-HRrmgia_KUJPpzoGsXwhbXcYomRWptThMS9DJ_-8i6orlGnbAxogfJGs5IboAyM2x-meeSmEyg8A=w1280"
+                    ),
+                    "48dccefe894d7951"
             ));
 
             cachedProfiles = Collections.unmodifiableList(list);
