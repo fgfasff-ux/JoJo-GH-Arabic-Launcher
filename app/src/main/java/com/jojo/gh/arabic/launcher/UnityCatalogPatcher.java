@@ -519,59 +519,95 @@ public final class UnityCatalogPatcher {
         );
     }
 
+    /**
+     * يقرأ رقم إصدار الكتالوج الداخلي (Catalog Version Integer، مثل 577044) من ملف الكتالوج،
+     * أو يعيد -1 إذا لم يكن ملف كتالوج صالحاً.
+     */
+    public static int readCatalogVersion(File file) {
+        if (!isUnityFsFile(file)) {
+            return -1;
+        }
+        try {
+            UnityFsBundle b = readUnityFs(file);
+            for (BundleNode n : b.nodes) {
+                if (n.data != null) {
+                    CatalogLayout layout = findCatalogHeader(n.data);
+                    if (layout != null) {
+                        return layout.catalogVersion;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return -1;
+    }
+
     // =========================================================================
     // محلل بنية AssetBundleCatalog الديناميكي داخل CAB
     // =========================================================================
 
     private static final class CatalogLayout {
+        final int catalogVersion;
         final int count;
         final List<String> names;
         final int infosStart;
 
-        CatalogLayout(int count, List<String> names, int infosStart) {
+        CatalogLayout(int catalogVersion, int count, List<String> names, int infosStart) {
+            this.catalogVersion = catalogVersion;
             this.count = count;
             this.names = names;
             this.infosStart = infosStart;
         }
     }
 
-    private static CatalogLayout findCatalogHeader(byte[] cab) {
-        int anchorPos = indexOfBytes(cab, CATALOG_ANCHOR, 0);
-        if (anchorPos < 0) {
-            return null;
-        }
-        int searchStart = anchorPos + CATALOG_ANCHOR.length;
-        int searchEnd = Math.min(cab.length - 8, searchStart + 64);
+    /**
+     * يبحث عبر *جميع* مواضع سلسلة AssetBundleCatalog داخل CAB (لأن الموضع الأول والثاني يعودان
+     * لكائن MonoScript واسم الـ Namespace، بينما الموضع الثالث يعود لكائن MonoBehaviour الفعلي الذي يحمل الجدول!).
+     */
+    static CatalogLayout findCatalogHeader(byte[] cab) {
+        int from = 0;
+        while (from < cab.length - CATALOG_ANCHOR.length) {
+            int anchorPos = indexOfBytes(cab, CATALOG_ANCHOR, from);
+            if (anchorPos < 0) {
+                break;
+            }
+            from = anchorPos + 4;
 
-        for (int cntPos = searchStart; cntPos <= searchEnd; cntPos += 4) {
-            int cnt = readIntLE(cab, cntPos);
-            if (cnt < 10 || cnt > 2_000_000) {
-                continue;
-            }
-            int cur = cntPos + 4;
-            List<String> names = new ArrayList<>(Math.min(cnt, 1024));
-            boolean ok = true;
-            for (int i = 0; i < cnt; i++) {
-                if (cur + 4 > cab.length) {
-                    ok = false;
-                    break;
+            int searchStart = anchorPos + CATALOG_ANCHOR.length;
+            int searchEnd = Math.min(cab.length - 8, searchStart + 64);
+            int catVer = (searchStart + 4 <= cab.length) ? readIntLE(cab, searchStart) : 0;
+
+            for (int cntPos = searchStart; cntPos <= searchEnd; cntPos += 4) {
+                int cnt = readIntLE(cab, cntPos);
+                if (cnt < 10 || cnt > 2_000_000) {
+                    continue;
                 }
-                int slen = readIntLE(cab, cur);
-                if (slen < 0 || slen > 512 || cur + 4 + slen > cab.length) {
-                    ok = false;
-                    break;
+                int cur = cntPos + 4;
+                List<String> names = new ArrayList<>(Math.min(cnt, 1024));
+                boolean ok = true;
+                for (int i = 0; i < cnt; i++) {
+                    if (cur + 4 > cab.length) {
+                        ok = false;
+                        break;
+                    }
+                    int slen = readIntLE(cab, cur);
+                    // أسماء الحزم في AssetBundleCatalog تكون دائماً نصوص مسارات ASCII غير فارغة (slen >= 1)
+                    if (slen <= 0 || slen > 512 || cur + 4 + slen > cab.length) {
+                        ok = false;
+                        break;
+                    }
+                    names.add(new String(cab, cur + 4, slen, StandardCharsets.UTF_8));
+                    cur += 4 + slen;
+                    int rem = cur & 3;
+                    if (rem != 0) {
+                        cur += 4 - rem;
+                    }
                 }
-                names.add(new String(cab, cur + 4, slen, StandardCharsets.UTF_8));
-                cur += 4 + slen;
-                int rem = cur & 3;
-                if (rem != 0) {
-                    cur += 4 - rem;
-                }
-            }
-            if (ok && cur + 4 <= cab.length) {
-                int infosCnt = readIntLE(cab, cur);
-                if (infosCnt == cnt) {
-                    return new CatalogLayout(cnt, names, cur + 4);
+                if (ok && cur + 4 <= cab.length) {
+                    int infosCnt = readIntLE(cab, cur);
+                    if (infosCnt == cnt) {
+                        return new CatalogLayout(catVer, cnt, names, cur + 4);
+                    }
                 }
             }
         }
@@ -621,12 +657,12 @@ public final class UnityCatalogPatcher {
             int token = src[s++] & 0xFF;
             int litLen = token >>> 4;
             if (litLen == 15) {
-                int b;
-                while (s < sEnd && (b = src[s++] & 0xFF) == 255) {
-                    litLen += 255;
-                }
-                if (s <= sEnd) {
-                    litLen += (src[s - 1] & 0xFF);
+                while (s < sEnd) {
+                    int b = src[s++] & 0xFF;
+                    litLen += b;
+                    if (b != 255) {
+                        break;
+                    }
                 }
             }
             if (litLen > 0) {
@@ -647,12 +683,12 @@ public final class UnityCatalogPatcher {
             }
             int matchLen = token & 0x0F;
             if (matchLen == 15) {
-                int b;
-                while (s < sEnd && (b = src[s++] & 0xFF) == 255) {
-                    matchLen += 255;
-                }
-                if (s <= sEnd) {
-                    matchLen += (src[s - 1] & 0xFF);
+                while (s < sEnd) {
+                    int b = src[s++] & 0xFF;
+                    matchLen += b;
+                    if (b != 255) {
+                        break;
+                    }
                 }
             }
             matchLen += 4;

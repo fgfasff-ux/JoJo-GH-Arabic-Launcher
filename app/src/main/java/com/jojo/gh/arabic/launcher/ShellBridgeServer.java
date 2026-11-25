@@ -651,8 +651,19 @@ public class ShellBridgeServer {
                         if (listener != null) {
                             listener.onProgress(86, "جارٍ التعديل الموضعي لكتالوج الأصول الحي (In-Place Catalog Patch)...");
                         }
-                        // نستخدم النسخة الأصلية النظيفة (backupFile إن وُجدت) أو الملف الحي كأساس للتعديل الموضعي
-                        File liveBase = (hadOriginal && backupFile.isFile()) ? backupFile : targetFile;
+                        // اختيار أحدث إصدار كتالوج متاح على الجهاز (بين targetFile و backupFile) لضمان عدم الرجوع لإصدار OTA أقدم أبداً
+                        File liveBase = targetFile;
+                        if (hadOriginal && backupFile.isFile()) {
+                            int targetCatVer = UnityCatalogPatcher.readCatalogVersion(targetFile);
+                            int backupCatVer = UnityCatalogPatcher.readCatalogVersion(backupFile);
+                            if (targetCatVer > backupCatVer) {
+                                // الكتالوج الحي أحدث من النسخة الاحتياطية القديمة -> حدّث النسخة الاحتياطية أولاً!
+                                copyFileAtomically(targetFile, backupFile);
+                                liveBase = backupFile;
+                            } else if (backupCatVer > 0) {
+                                liveBase = backupFile;
+                            }
+                        }
                         Map<String, long[]> overrides = UnityCatalogPatcher.extractOverrides(
                                 src, stagedNonCatalogUnityBundles, catalogPatchJsonFile
                         );

@@ -14,7 +14,7 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "3.5.0";
+    public static final String APP_VERSION = "3.5.1";
     public static final String BRAND_TITLE = "تعريب R.D.AV";
     public static final String HUB_TITLE = "R.D.AV Multi-Game Hub";
     public static final String HUB_SUBTITLE = "منصة تعريب الألعاب العربية الفصحى • متعدد الألعاب";
@@ -95,7 +95,7 @@ public final class LauncherConfig {
     // 4) إعدادات جسر Shizuku المحلي
     // =========================================================================
     public static final int BRIDGE_PORT = 38922;
-    public static final String BRIDGE_REV = "r14";
+    public static final String BRIDGE_REV = "r15";
     public static final String SHIZUKU_PACKAGE = SecretVault.shizukuPackage();
 
     // =========================================================================
