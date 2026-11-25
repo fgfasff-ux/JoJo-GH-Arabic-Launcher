@@ -9,6 +9,8 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.content.pm.SigningInfo;
 import android.content.res.AssetFileDescriptor;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
@@ -65,6 +67,7 @@ import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
@@ -115,12 +118,29 @@ public class MainActivity extends Activity {
     private static final class SafetyCheckResult {
         final boolean safe;
         final boolean hasBackup;
+        final boolean otaSyncNeeded;
+        final boolean otaAutoSynced;
         final String reason;
+        final String otaDetail;
 
         SafetyCheckResult(boolean safe, boolean hasBackup, String reason) {
+            this(safe, hasBackup, false, false, reason, "");
+        }
+
+        SafetyCheckResult(
+                boolean safe,
+                boolean hasBackup,
+                boolean otaSyncNeeded,
+                boolean otaAutoSynced,
+                String reason,
+                String otaDetail
+        ) {
             this.safe = safe;
             this.hasBackup = hasBackup;
+            this.otaSyncNeeded = otaSyncNeeded;
+            this.otaAutoSynced = otaAutoSynced;
             this.reason = reason != null ? reason : "";
+            this.otaDetail = otaDetail != null ? otaDetail : "";
         }
     }
 
@@ -3505,12 +3525,211 @@ public class MainActivity extends Activity {
         return -1L;
     }
 
+    private static String normalizeVersionName(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String s = raw.trim();
+        while (s.startsWith("v") || s.startsWith("V")) {
+            s = s.substring(1).trim();
+        }
+        return s;
+    }
+
+    @SuppressWarnings("deprecation")
+    private String getInstalledGameApkSignatureSha256(String explicitPkg) {
+        try {
+            PackageManager pm = getPackageManager();
+            String pkg = (explicitPkg != null && !explicitPkg.trim().isEmpty())
+                    ? explicitPkg.trim()
+                    : (activeProfile != null ? activeProfile.packageName : LauncherConfig.GAME_PACKAGE);
+            if (pkg == null || pkg.isEmpty()) {
+                return "";
+            }
+            Signature[] sigs = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES);
+                if (pi != null && pi.signingInfo != null) {
+                    SigningInfo si = pi.signingInfo;
+                    sigs = si.hasMultipleSigners() ? si.getApkContentsSigners() : si.getSigningCertificateHistory();
+                }
+            } else {
+                PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES);
+                if (pi != null) {
+                    sigs = pi.signatures;
+                }
+            }
+            if (sigs == null || sigs.length == 0 || sigs[0] == null) {
+                return "";
+            }
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(sigs[0].toByteArray());
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : digest) {
+                sb.append(String.format(Locale.US, "%02X", b & 0xFF));
+            }
+            return sb.toString();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private File getLocalPatchCacheZip(String gameId) {
+        File dir = new File(getFilesDir(), "patch_cache/" + (gameId != null ? gameId : "default"));
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        return new File(dir, "cached_patch.zip");
+    }
+
+    private void saveLocalPatchCache(
+            String gameId,
+            File sourceZip,
+            String patchVersion,
+            String targetSubpath,
+            long apkVersionCode,
+            String apkVersionName,
+            String apkSigSha256
+    ) {
+        if (gameId == null || sourceZip == null || !sourceZip.isFile()) {
+            return;
+        }
+        try {
+            File dstZip = getLocalPatchCacheZip(gameId);
+            ShellBridgeServer.copyFileAtomically(sourceZip, dstZip);
+            SharedPreferences prefs = getSharedPreferences("rdav_ota_cache", MODE_PRIVATE);
+            prefs.edit()
+                    .putString("ver_" + gameId, patchVersion != null ? patchVersion : "")
+                    .putString("subpath_" + gameId, targetSubpath != null ? targetSubpath : "")
+                    .putLong("apk_vc_" + gameId, apkVersionCode)
+                    .putString("apk_vname_" + gameId, normalizeVersionName(apkVersionName))
+                    .putString("apk_sig_" + gameId, apkSigSha256 != null ? apkSigSha256 : "")
+                    .apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void saveLocalPatchCacheFromUri(
+            String gameId,
+            Uri zipUri,
+            String patchVersion,
+            String targetSubpath,
+            long apkVersionCode,
+            String apkVersionName,
+            String apkSigSha256
+    ) {
+        if (gameId == null || zipUri == null) {
+            return;
+        }
+        try {
+            File dstZip = getLocalPatchCacheZip(gameId);
+            File tmp = new File(dstZip.getParentFile(), "cached_patch.zip.tmp");
+            try (InputStream in = getContentResolver().openInputStream(zipUri);
+                 FileOutputStream out = new FileOutputStream(tmp)) {
+                if (in == null) {
+                    return;
+                }
+                byte[] buf = new byte[65536];
+                int r;
+                while ((r = in.read(buf)) > 0) {
+                    out.write(buf, 0, r);
+                }
+                out.flush();
+            }
+            if (dstZip.exists()) {
+                dstZip.delete();
+            }
+            tmp.renameTo(dstZip);
+            SharedPreferences prefs = getSharedPreferences("rdav_ota_cache", MODE_PRIVATE);
+            prefs.edit()
+                    .putString("ver_" + gameId, patchVersion != null ? patchVersion : "local-zip")
+                    .putString("subpath_" + gameId, targetSubpath != null ? targetSubpath : "")
+                    .putLong("apk_vc_" + gameId, apkVersionCode)
+                    .putString("apk_vname_" + gameId, normalizeVersionName(apkVersionName))
+                    .putString("apk_sig_" + gameId, apkSigSha256 != null ? apkSigSha256 : "")
+                    .apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private boolean hasMatchingLocalPatchCache(String gameId, long installedApkVc) {
+        if (gameId == null) {
+            return false;
+        }
+        File cacheZip = getLocalPatchCacheZip(gameId);
+        if (!cacheZip.isFile() || cacheZip.length() < 1024) {
+            return false;
+        }
+        SharedPreferences prefs = getSharedPreferences("rdav_ota_cache", MODE_PRIVATE);
+        long cachedVc = prefs.getLong("apk_vc_" + gameId, -1L);
+        return cachedVc <= 0 || installedApkVc <= 0 || cachedVc == installedApkVc;
+    }
+
+    /**
+     * المزامنة الذكية والإصلاح الذاتي (Smart OTA Sync & Auto-Reapply):
+     * يعيد حقن حزمة التعريب المحفوظة محلياً دون إنترنت، مع أخذ نسخة احتياطية محدّثة (Fresh Backup)
+     * من ملفات OTA الجديدة وتطبيق التعديل الموضعي على الكتالوج الحي (In-Place Catalog Patching).
+     */
+    private boolean autoReapplyCachedPatchSync(AccessMode mode, String gameId) {
+        if (gameId == null || !isReadyAccessMode(mode)) {
+            return false;
+        }
+        File cacheZip = getLocalPatchCacheZip(gameId);
+        if (!cacheZip.isFile()) {
+            return false;
+        }
+        SharedPreferences prefs = getSharedPreferences("rdav_ota_cache", MODE_PRIVATE);
+        String patchVer = prefs.getString("ver_" + gameId, "ota-sync");
+        String targetSubpath = prefs.getString("subpath_" + gameId, "");
+
+        File workDir = new File(getHintDir(), "rdav_ota_sync_work");
+        File stageDir = new File(workDir, "stage");
+        try {
+            ShellBridgeServer.deleteRecursive(workDir);
+            stageDir.mkdirs();
+            PatchDownloader.extractZipFile(cacheZip, stageDir, null, 0, 50);
+            File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
+
+            PatchStrategy strategy = activeProfile != null ? activeProfile.patchStrategy : PatchStrategy.ASSET_REPLACE;
+            strategy.validateStagedPayload(effectiveStage, activeProfile);
+            String normSubpath = strategy.resolveDefaultTargetSubpath(targetSubpath);
+            String activePkg = activeProfile != null ? activeProfile.packageName : "";
+
+            String result;
+            if (mode == AccessMode.BRIDGE_ACTIVE) {
+                result = sendBridgeCommandWithProgress(
+                        "APPLY_INSTALL\t" + effectiveStage.getAbsolutePath() + "\t" + patchVer + "\t" + normSubpath + "\t" + activePkg,
+                        180000,
+                        null
+                );
+            } else if (mode == AccessMode.DIRECT_FS) {
+                result = ShellBridgeServer.applyInstall(effectiveStage, patchVer, normSubpath, activePkg, null);
+            } else {
+                Uri tree = SafHelper.findGrantedTreeUri(this);
+                result = tree != null
+                        ? SafHelper.applyInstall(this, tree, effectiveStage, patchVer, normSubpath, null)
+                        : "ERR|NO_SAF";
+            }
+            if (result != null && result.startsWith("OK|")) {
+                isPatchCurrentlyInstalled = true;
+                installedPatchVersion = patchVer;
+                return true;
+            }
+            return false;
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            ShellBridgeServer.deleteRecursive(workDir);
+        }
+    }
+
     private SafetyCheckResult evaluateSafetyGuardSync(
             AccessMode mode,
             PatchManifest manifestOpt,
-            boolean autoRestoreIfMismatch
+            boolean allowAutoAction
     ) {
         boolean isJoJo = activeProfile == null || "jojo_golden_hymn".equals(activeProfile.id);
+        String activeId = activeProfile != null ? activeProfile.id : "jojo_golden_hymn";
         String activePkg = activeProfile != null ? activeProfile.packageName : "";
         long targetVc = manifestOpt != null
                 ? manifestOpt.targetGameVersionCode
@@ -3534,16 +3753,38 @@ public class MainActivity extends Activity {
 
         long installedVc = getInstalledGameVersionCode();
         String installedVerName = getInstalledGameVersion();
+        String installedApkSig = getInstalledGameApkSignatureSha256(activePkg);
 
         boolean dataHasBackup = false;
-        String mismatchReason = null;
+        String apkMismatchReason = null;
 
+        // 1) بوابة القفل الصارم (APK Version & Signature Gate):
+        // يرتبط الحظر الصارم فقط بتغيّر versionCode أو versionName أو توقيع الـ APK المثبت في النظام!
         if (installedVc > 0 && targetVc > 0 && installedVc != targetVc) {
-            mismatchReason = "إصدار اللعبة المثبّت (v" + (installedVerName != null ? installedVerName : "?")
+            apkMismatchReason = "إصدار اللعبة المثبّت (v" + (installedVerName != null ? installedVerName : "?")
                     + " / code=" + installedVc + ") يختلف عن الإصدار المدعوم للتعريب (v"
                     + targetVerName
                     + " / code=" + targetVc + ").";
+        } else {
+            String normInst = normalizeVersionName(installedVerName);
+            String normTarget = normalizeVersionName(targetVerName);
+            if (!normInst.isEmpty() && !normTarget.isEmpty() && !normInst.equalsIgnoreCase(normTarget)) {
+                apkMismatchReason = "رقم إصدار اللعبة المثبّت (v" + normInst
+                        + ") يختلف عن الإصدار المدعوم للتعريب (v" + normTarget + ").";
+            }
         }
+
+        if (apkMismatchReason == null && !installedApkSig.isEmpty()) {
+            SharedPreferences prefs = getSharedPreferences("rdav_ota_cache", MODE_PRIVATE);
+            String recordedSig = prefs.getString("apk_sig_" + activeId, "");
+            if (!recordedSig.isEmpty() && !recordedSig.equalsIgnoreCase(installedApkSig)) {
+                apkMismatchReason = "تغيّر التوقيع الرقمي (APK Signature) للعبة المثبّتة عن النسخة التي تم تعريبها مسبقاً.";
+            }
+        }
+
+        // 2) فحص ملفات Android/data الداخلية لتمييز التحديثات السحابية (OTA Hotfixes) عن تحديثات المتجر
+        boolean otaChanged = false;
+        String otaDetail = "";
 
         if (isReadyAccessMode(mode)) {
             String resp = null;
@@ -3565,15 +3806,13 @@ public class MainActivity extends Activity {
                 }
             }
 
-            if (resp != null && resp.startsWith("MISMATCH|")) {
+            if (resp != null && (resp.startsWith("OTA_CHANGED|") || resp.startsWith("MISMATCH|"))) {
                 String[] parts = resp.split("\\|", -1);
                 if (parts.length >= 3) {
                     dataHasBackup = Boolean.parseBoolean(parts[2]);
                 }
-                String detail = parts.length >= 4 ? parts[3] : parts[1];
-                if (mismatchReason == null) {
-                    mismatchReason = "تم رصد تغيّر في ملفات بيانات اللعبة الداخلية: " + detail;
-                }
+                otaDetail = parts.length >= 4 ? parts[3] : parts[1];
+                otaChanged = true;
             } else if (resp != null && resp.startsWith("OK|")) {
                 String[] parts = resp.split("\\|", -1);
                 if (parts.length >= 3) {
@@ -3582,16 +3821,29 @@ public class MainActivity extends Activity {
             }
         }
 
-        if (mismatchReason != null) {
-            if (autoRestoreIfMismatch && isReadyAccessMode(mode) && (dataHasBackup || isPatchCurrentlyInstalled)) {
+        // إذا تغيّر الـ APK نفسه (تحديث متجر رئيسي): إيقاف صارم + استعادة الأصل لحماية الحساب
+        if (apkMismatchReason != null) {
+            if (allowAutoAction && isReadyAccessMode(mode) && (dataHasBackup || isPatchCurrentlyInstalled)) {
                 executeRestoreSync(mode, null);
                 isPatchCurrentlyInstalled = false;
                 installedPatchVersion = "";
             }
-            return new SafetyCheckResult(false, dataHasBackup, mismatchReason);
+            return new SafetyCheckResult(false, dataHasBackup, false, false, apkMismatchReason, "");
         }
 
-        return new SafetyCheckResult(true, dataHasBackup, "");
+        // إذا بقي الـ APK مطابقاً 100% لكن تغيّرت ملفات Android/data بسبب تحديث داخلي (OTA Hotfix):
+        // لا نُظهر رسالة حظر حمراء أبداً — نُفعّل المزامنة الذكية والإصلاح الذاتي (Fresh Backup + In-Place Catalog Patch)!
+        if (otaChanged) {
+            if (allowAutoAction && isReadyAccessMode(mode) && hasMatchingLocalPatchCache(activeId, installedVc)) {
+                boolean synced = autoReapplyCachedPatchSync(mode, activeId);
+                if (synced) {
+                    return new SafetyCheckResult(true, true, false, true, "", otaDetail);
+                }
+            }
+            return new SafetyCheckResult(true, dataHasBackup, true, false, "", otaDetail);
+        }
+
+        return new SafetyCheckResult(true, dataHasBackup, false, false, "", "");
     }
 
     private void showSafetyGuardAlertDialog(String technicalReason) {
@@ -3866,6 +4118,9 @@ public class MainActivity extends Activity {
             if (!safety.safe && (patchInstalled || safety.hasBackup)) {
                 patchInstalled = false;
                 patchVer = "";
+            } else if (safety.otaAutoSynced) {
+                patchInstalled = true;
+                patchVer = installedPatchVersion;
             }
 
             final boolean fGameReady = gameReady;
@@ -3879,7 +4134,7 @@ public class MainActivity extends Activity {
                 setStepDotState(tvStep1Dot, gameInstalled, !gameInstalled);
                 setStepDotState(tvStep2Dot, gameInstalled && fSafety.safe, gameInstalled && !fSafety.safe);
                 setStepDotState(tvStep3Dot, accessOk, false);
-                setStepDotState(tvStep4Dot, fPatchInstalled && fSafety.safe, false);
+                setStepDotState(tvStep4Dot, fPatchInstalled && fSafety.safe && !fSafety.otaSyncNeeded, false);
 
                 if (!isBusy) {
                     if (!gameInstalled) {
@@ -3888,11 +4143,23 @@ public class MainActivity extends Activity {
                         progressBar.setProgress(0);
                         tvProgressPercent.setText("0%");
                     } else if (!fSafety.safe) {
-                        tvHeadlineStatus.setText("تم اكتشاف تحديث جديد للعبة!");
+                        tvHeadlineStatus.setText("تم اكتشاف تحديث جديد لنسخة اللعبة (APK)!");
                         tvHeadlineStatus.setTextColor(LauncherConfig.COL_DANGER);
                         tvStatusText.setText(LauncherConfig.SAFETY_GUARD_ALERT_MESSAGE);
                         progressBar.setProgress(25);
                         tvProgressPercent.setText("تنبيه");
+                    } else if (fSafety.otaAutoSynced) {
+                        tvHeadlineStatus.setText("تمت مزامنة التعريب تلقائياً (OTA) ✓");
+                        tvHeadlineStatus.setTextColor(LauncherConfig.COL_SUCCESS);
+                        tvStatusText.setText("تم رصد تحديث داخلي سحابي وأُخذت نسخة احتياطية جديدة وأُعيد حقن التعريب مع تحديث الكتالوج موضعياً ✓");
+                        progressBar.setProgress(100);
+                        tvProgressPercent.setText("100%");
+                    } else if (fSafety.otaSyncNeeded) {
+                        tvHeadlineStatus.setText("تحديث داخلي (OTA) — جاهز للمزامنة السريعة");
+                        tvHeadlineStatus.setTextColor(LauncherConfig.COL_CYAN);
+                        tvStatusText.setText("نسخة الـ APK متوافقة 100%. اضغط «تحديث أونلاين» أو «تثبيت» لمزامنة التعريب مع الملفات الجديدة وحفظ نسخة احتياطية محدّثة.");
+                        progressBar.setProgress(85);
+                        tvProgressPercent.setText("مزامنة");
                     } else if (fPatchInstalled) {
                         tvHeadlineStatus.setText("التعريب مثبّت وسليم ✓");
                         tvHeadlineStatus.setTextColor(LauncherConfig.COL_SUCCESS);
@@ -3928,11 +4195,17 @@ public class MainActivity extends Activity {
                 if (!gameInstalled) {
                     tvSafetyBadge.setText("بانتظار اللعبة");
                     setBadgeStyle(tvSafetyBadge, Color.parseColor("#22153D"), LauncherConfig.COL_MUTED);
+                } else if (fSafety.otaAutoSynced) {
+                    tvSafetyBadge.setText("متزامن (OTA) ✓");
+                    setBadgeStyle(tvSafetyBadge, Color.parseColor("#113826"), LauncherConfig.COL_SUCCESS);
+                } else if (fSafety.otaSyncNeeded) {
+                    tvSafetyBadge.setText("مزامنة OTA متاحة");
+                    setBadgeStyle(tvSafetyBadge, Color.parseColor("#0D2F45"), LauncherConfig.COL_CYAN);
                 } else if (fSafety.safe) {
                     tvSafetyBadge.setText("متوافق وآمن ✓");
                     setBadgeStyle(tvSafetyBadge, Color.parseColor("#113826"), LauncherConfig.COL_SUCCESS);
                 } else {
-                    tvSafetyBadge.setText("تحديث غير متوافق!");
+                    tvSafetyBadge.setText("تحديث APK غير متوافق!");
                     setBadgeStyle(tvSafetyBadge, Color.parseColor("#3D1222"), LauncherConfig.COL_DANGER);
                     if (!safetyAlertShownThisSession) {
                         safetyAlertShownThisSession = true;
@@ -4339,6 +4612,17 @@ public class MainActivity extends Activity {
                 updateProgress(47, "جارٍ التحقق من سلامة حزمة التعريب (SHA-256)...");
                 PatchDownloader.verifySha256IfProvided(zipFile, manifest.sha256);
 
+                // حفظ نسخة محلية في كاش المزامنة الذكية (Smart OTA Sync) لإعادة التطبيق فورياً دون إنترنت عند أي Hotfix
+                saveLocalPatchCache(
+                        activeProfile.id,
+                        zipFile,
+                        manifest.patchVersion,
+                        manifest.resolveEffectiveSubpath(),
+                        getInstalledGameVersionCode(),
+                        getInstalledGameVersion(),
+                        getInstalledGameApkSignatureSha256(activeProfile.packageName)
+                );
+
                 PatchDownloader.extractZipFile(zipFile, stageDir, this::updateProgress, 48, 58);
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
 
@@ -4406,6 +4690,15 @@ public class MainActivity extends Activity {
                 stageDir.mkdirs();
 
                 PatchDownloader.extractZipUri(this, zipUri, stageDir, this::updateProgress, 20, 58);
+                saveLocalPatchCacheFromUri(
+                        activeProfile.id,
+                        zipUri,
+                        "local-zip",
+                        activeProfile.patchStrategy.resolveDefaultTargetSubpath(""),
+                        getInstalledGameVersionCode(),
+                        getInstalledGameVersion(),
+                        getInstalledGameApkSignatureSha256(activeProfile.packageName)
+                );
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
                 executeInstallFromStage(mode, effectiveStage, "local-zip", activeProfile.patchStrategy.resolveDefaultTargetSubpath(""));
             } catch (Throwable t) {
@@ -4469,6 +4762,16 @@ public class MainActivity extends Activity {
 
                 updateProgress(52, "🧪 جارٍ التحقق من بصمة SHA-256 لنسخة الاختبار...");
                 PatchDownloader.verifySha256IfProvided(zipFile, betaManifest.sha256);
+
+                saveLocalPatchCache(
+                        activeProfile.id,
+                        zipFile,
+                        "beta-" + betaManifest.patchVersion,
+                        betaManifest.resolveEffectiveSubpath(),
+                        getInstalledGameVersionCode(),
+                        getInstalledGameVersion(),
+                        getInstalledGameApkSignatureSha256(activeProfile.packageName)
+                );
 
                 PatchDownloader.extractZipFile(zipFile, stageDir, this::updateProgress, 55, 68);
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);

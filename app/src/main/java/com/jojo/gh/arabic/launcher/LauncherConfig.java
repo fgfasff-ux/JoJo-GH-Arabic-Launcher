@@ -14,7 +14,7 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "3.4.0";
+    public static final String APP_VERSION = "3.5.0";
     public static final String BRAND_TITLE = "تعريب R.D.AV";
     public static final String HUB_TITLE = "R.D.AV Multi-Game Hub";
     public static final String HUB_SUBTITLE = "منصة تعريب الألعاب العربية الفصحى • متعدد الألعاب";
@@ -78,7 +78,7 @@ public final class LauncherConfig {
     public static final String BACKUP_MANIFEST_FILE = "manifest.txt";
 
     public static final String SAFETY_GUARD_ALERT_MESSAGE =
-            "تم اكتشاف تحديث جديد للعبة! تم إيقاف التعريب واستعادة الملفات الأصلية الآمنة لحماية حسابك حتى يتم تحديث حزمة التعريب";
+            "تم اكتشاف تحديث رئيسي جديد لنسخة اللعبة من المتجر (APK)! تم إيقاف التعريب واستعادة الملفات الأصلية الآمنة لحماية حسابك حتى يتم تحديث حزمة التعريب";
 
     // =========================================================================
     // 3) إعدادات التحديث والتحميل أونلاين (محمية داخل SecretVault)
@@ -95,7 +95,7 @@ public final class LauncherConfig {
     // 4) إعدادات جسر Shizuku المحلي
     // =========================================================================
     public static final int BRIDGE_PORT = 38922;
-    public static final String BRIDGE_REV = "r13";
+    public static final String BRIDGE_REV = "r14";
     public static final String SHIZUKU_PACKAGE = SecretVault.shizukuPackage();
 
     // =========================================================================

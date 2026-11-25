@@ -310,31 +310,14 @@ public final class SafHelper {
                         ShellBridgeServer.parseManifest(readTextFromSaf(context, treeUri, manifestDocId));
                 ShellBridgeServer.BackupEntry langEntry = m.byPath.get(LauncherConfig.TARGET_LANG_REL_PATH);
                 if (langEntry != null && langExists && curLangSize != langEntry.patchedSize) {
-                    return "MISMATCH|HOTUPDATE_OVERWROTE_LANG|true|تغير حجم t_languageBean.bbytes";
+                    return "OTA_CHANGED|HOTUPDATE_OVERWROTE_LANG|true|تغير حجم t_languageBean.bbytes بعد تحديث داخلي (OTA)";
                 }
                 ShellBridgeServer.BackupEntry confEntry = m.byPath.get(LauncherConfig.TARGET_INDEX_REL_PATH);
                 if (confEntry != null && confExists && curConfSize != confEntry.patchedSize) {
-                    return "MISMATCH|HOTUPDATE_OVERWROTE_CONF|true|تغير حجم config/force.conf";
+                    return "OTA_CHANGED|HOTUPDATE_OVERWROTE_CONF|true|تغير حجم config/force.conf بعد تحديث داخلي (OTA)";
                 }
                 return "OK|SAFE|true|" + curLangSize + "|" + curLangMd5 + "|" + curConfSize;
             } else {
-                boolean matchesKnownPatched = langExists
-                        && LauncherConfig.TARGET_LANG_PATCHED_SIZE > 0
-                        && curLangSize == LauncherConfig.TARGET_LANG_PATCHED_SIZE
-                        && LauncherConfig.TARGET_LANG_PATCHED_MD5.equalsIgnoreCase(curLangMd5);
-
-                if (!matchesKnownPatched) {
-                    if (expectedLangSize > 0 && langExists && curLangSize != expectedLangSize) {
-                        return "MISMATCH|LANG_SIZE_CHANGED|false|حجم ملف اللغة تغير (" + curLangSize + ")";
-                    }
-                    if (expectedLangMd5 != null && !expectedLangMd5.isEmpty() && langExists
-                            && !expectedLangMd5.equalsIgnoreCase(curLangMd5)) {
-                        return "MISMATCH|LANG_MD5_CHANGED|false|بصمة MD5 لملف اللغة تغيرت";
-                    }
-                }
-                if (expectedForceConfSize > 0 && confExists && curConfSize != expectedForceConfSize) {
-                    return "MISMATCH|FORCE_CONF_CHANGED|false|حجم config/force.conf تغير (" + curConfSize + ")";
-                }
                 return "OK|SAFE|false|" + curLangSize + "|" + curLangMd5 + "|" + curConfSize;
             }
         } catch (Throwable t) {

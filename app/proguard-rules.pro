@@ -24,6 +24,7 @@
 -keep interface rikka.shizuku.** { *; }
 -dontwarn rikka.shizuku.**
 -dontwarn moe.shizuku.**
+-dontwarn org.tukaani.xz.**
 
 # 3) Keep Android Parcelable & Binder stubs used by Shizuku IPC
 -keep class * implements android.os.IInterface { *; }

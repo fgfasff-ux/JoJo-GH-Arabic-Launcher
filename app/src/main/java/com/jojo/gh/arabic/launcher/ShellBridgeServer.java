@@ -50,11 +50,17 @@ public class ShellBridgeServer {
         public final String relPath;
         public final long patchedSize;
         public final boolean hadOriginal;
+        public final String patchedSha256;
 
         public BackupEntry(String relPath, long patchedSize, boolean hadOriginal) {
+            this(relPath, patchedSize, hadOriginal, "");
+        }
+
+        public BackupEntry(String relPath, long patchedSize, boolean hadOriginal, String patchedSha256) {
             this.relPath = relPath;
             this.patchedSize = patchedSize;
             this.hadOriginal = hadOriginal;
+            this.patchedSha256 = patchedSha256 != null ? patchedSha256.trim().toLowerCase(Locale.US) : "";
         }
     }
 
@@ -385,14 +391,18 @@ public class ShellBridgeServer {
             File manifestFile = new File(backupDir, LauncherConfig.BACKUP_MANIFEST_FILE);
             boolean hasBackup = manifestFile.isFile();
 
-            // حارس الأمان متعدد الألعاب لـ Dragon Ball Legends وبقية ألعاب Unity Asset Replace
+            // فحص التحديثات السحابية الداخلية (OTA Hotfix Detection) بشكل عام لجميع الألعاب:
+            // لا يُعيد حظراً صارماً (MISMATCH) بل يُعيد OTA_CHANGED ليقوم اللانشر بالمزامنة الذكية والنسخ الاحتياطي المحدّث تلقائياً.
             if (!isJoJoPackage(targetPackage)) {
                 if (hasBackup) {
                     BackupManifest m = parseManifest(readText(manifestFile));
                     for (BackupEntry entry : m.entries) {
                         File target = new File(filesDir, entry.relPath);
                         if (!target.isFile() || target.length() != entry.patchedSize) {
-                            return "MISMATCH|HOTUPDATE_OVERWROTE_LANG|true|تغيّر ملف " + entry.relPath + " بعد تحديث اللعبة";
+                            return "OTA_CHANGED|HOTUPDATE_OVERWROTE_DATA|true|تغيّر ملف " + entry.relPath + " بعد تحديث داخلي (OTA)";
+                        }
+                        if (!entry.patchedSha256.isEmpty() && !entry.patchedSha256.equalsIgnoreCase(sha256Lower(target))) {
+                            return "OTA_CHANGED|HOTUPDATE_HASH_CHANGED|true|تغيّرت بصمة " + entry.relPath + " بعد تحديث داخلي (OTA)";
                         }
                     }
                     return "OK|SAFE|true|0||0";
@@ -410,37 +420,23 @@ public class ShellBridgeServer {
             if (hasBackup) {
                 BackupManifest m = parseManifest(readText(manifestFile));
                 BackupEntry langEntry = m.byPath.get(LauncherConfig.TARGET_LANG_REL_PATH);
-                if (langEntry != null && langFile.isFile() && curLangSize != langEntry.patchedSize) {
-                    return "MISMATCH|HOTUPDATE_OVERWROTE_LANG|true|تغير حجم t_languageBean.bbytes من "
-                            + langEntry.patchedSize + " إلى " + curLangSize;
+                if (langEntry != null && langFile.isFile()) {
+                    if (curLangSize != langEntry.patchedSize) {
+                        return "OTA_CHANGED|HOTUPDATE_OVERWROTE_LANG|true|تغير حجم t_languageBean.bbytes من "
+                                + langEntry.patchedSize + " إلى " + curLangSize;
+                    }
+                    if (!langEntry.patchedSha256.isEmpty() && !langEntry.patchedSha256.equalsIgnoreCase(sha256Lower(langFile))) {
+                        return "OTA_CHANGED|HOTUPDATE_HASH_CHANGED|true|تغيرت بصمة t_languageBean.bbytes بعد تحديث داخلي (OTA)";
+                    }
                 }
                 BackupEntry confEntry = m.byPath.get(LauncherConfig.TARGET_INDEX_REL_PATH);
                 if (confEntry != null && forceConfFile.isFile() && curForceConfSize != confEntry.patchedSize) {
-                    return "MISMATCH|HOTUPDATE_OVERWROTE_CONF|true|تغير حجم config/force.conf من "
+                    return "OTA_CHANGED|HOTUPDATE_OVERWROTE_CONF|true|تغير حجم config/force.conf من "
                             + confEntry.patchedSize + " إلى " + curForceConfSize;
                 }
                 return "OK|SAFE|true|" + curLangSize + "|" + curLangMd5 + "|" + curForceConfSize;
             } else {
-                // اللعبة غير معرّبة حالياً (أو حزمة التعريب المعتمدة مثبتة مسبقاً):
-                boolean matchesKnownPatched = langFile.isFile()
-                        && LauncherConfig.TARGET_LANG_PATCHED_SIZE > 0
-                        && curLangSize == LauncherConfig.TARGET_LANG_PATCHED_SIZE
-                        && LauncherConfig.TARGET_LANG_PATCHED_MD5.equalsIgnoreCase(curLangMd5);
-
-                if (!matchesKnownPatched) {
-                    if (expectedLangSize > 0 && langFile.isFile() && curLangSize != expectedLangSize) {
-                        return "MISMATCH|LANG_SIZE_CHANGED|false|حجم t_languageBean.bbytes الحالي (" + curLangSize
-                                + ") لا يطابق المتوقع (" + expectedLangSize + ")";
-                    }
-                    if (expectedLangMd5 != null && !expectedLangMd5.isEmpty() && langFile.isFile()
-                            && !expectedLangMd5.equalsIgnoreCase(curLangMd5)) {
-                        return "MISMATCH|LANG_MD5_CHANGED|false|بصمة MD5 لملف t_languageBean.bbytes تغيرت (" + curLangMd5 + ")";
-                    }
-                }
-                if (expectedForceConfSize > 0 && forceConfFile.isFile() && curForceConfSize != expectedForceConfSize) {
-                    return "MISMATCH|FORCE_CONF_CHANGED|false|حجم config/force.conf الحالي (" + curForceConfSize
-                            + ") لا يطابق المتوقع (" + expectedForceConfSize + ")";
-                }
+                // اللعبة غير معرّبة حالياً — تغيّر ملفات Android/data مع ثبات الـ APK يُصنّف كـ OTA داخلي وليس حظراً صارماً
                 return "OK|SAFE|false|" + curLangSize + "|" + curLangMd5 + "|" + curForceConfSize;
             }
         } catch (Throwable t) {
@@ -514,12 +510,39 @@ public class ShellBridgeServer {
                 return "ERR|MISSING_STAGE_DIR";
             }
 
-            List<File> stagedFiles = new ArrayList<>();
-            collectFilesRecursively(stagingDir, stagedFiles);
+            List<File> rawStagedFiles = new ArrayList<>();
+            collectFilesRecursively(stagingDir, rawStagedFiles);
+            if (rawStagedFiles.isEmpty()) {
+                return "ERR|EMPTY_STAGE";
+            }
+            Collections.sort(rawStagedFiles, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
+
+            // فصل ملف بيانات الكتالوج الإضافي (catalog_patch.json) عن ملفات اللعبة الفعلية
+            File catalogPatchJsonFile = null;
+            List<File> stagedFiles = new ArrayList<>(rawStagedFiles.size());
+            for (File f : rawStagedFiles) {
+                if ("catalog_patch.json".equalsIgnoreCase(f.getName())) {
+                    catalogPatchJsonFile = f;
+                } else {
+                    stagedFiles.add(f);
+                }
+            }
             if (stagedFiles.isEmpty()) {
                 return "ERR|EMPTY_STAGE";
             }
-            Collections.sort(stagedFiles, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
+
+            // تحديد ملفات حزم UnityFS غير الكتالوج لاستخدامها في التعديل الموضعي (In-Place Catalog Patching)
+            List<File> stagedNonCatalogUnityBundles = new ArrayList<>();
+            Set<File> stagedCatalogFiles = new HashSet<>();
+            for (File f : stagedFiles) {
+                if (UnityCatalogPatcher.isUnityFsFile(f)) {
+                    if (UnityCatalogPatcher.isAssetBundleCatalog(f)) {
+                        stagedCatalogFiles.add(f);
+                    } else {
+                        stagedNonCatalogUnityBundles.add(f);
+                    }
+                }
+            }
 
             stopGameSafely(targetPackage);
 
@@ -569,6 +592,7 @@ public class ShellBridgeServer {
             nextManifest.installedAt = System.currentTimeMillis();
 
             int total = stagedFiles.size();
+            int inPlaceCatalogCount = 0;
             for (int i = 0; i < total; i++) {
                 File src = stagedFiles.get(i);
                 String relFromFiles = orderedRelPaths.get(i);
@@ -578,16 +602,25 @@ public class ShellBridgeServer {
                 BackupEntry prev = prevManifest.byPath.get(relFromFiles);
                 boolean hadOriginal;
 
+                // النسخ الاحتياطي المحدّث تلقائياً (Fresh Backup on OTA):
+                // إذا تغيّر الملف الحي على الجهاز عن آخر نسخة معرّبة (بالحجم أو SHA-256)، نحدّث النسخة الأصلية في orig/ فوراً.
                 if (prev != null) {
                     if (prev.hadOriginal && backupFile.isFile()) {
-                        if (targetFile.isFile()
-                                && targetFile.length() != prev.patchedSize
-                                && targetFile.length() != backupFile.length()) {
-                            copyFileAtomically(targetFile, backupFile);
+                        if (targetFile.isFile()) {
+                            boolean changedFromPatched = targetFile.length() != prev.patchedSize
+                                    || (!prev.patchedSha256.isEmpty() && !prev.patchedSha256.equalsIgnoreCase(sha256Lower(targetFile)));
+                            if (changedFromPatched) {
+                                boolean differsFromBackup = targetFile.length() != backupFile.length()
+                                        || !sha256Lower(targetFile).equalsIgnoreCase(sha256Lower(backupFile));
+                                if (differsFromBackup) {
+                                    copyFileAtomically(targetFile, backupFile);
+                                }
+                            }
                         }
                         hadOriginal = true;
                     } else if (!prev.hadOriginal) {
-                        if (targetFile.isFile() && targetFile.length() != prev.patchedSize) {
+                        if (targetFile.isFile() && (targetFile.length() != prev.patchedSize
+                                || (!prev.patchedSha256.isEmpty() && !prev.patchedSha256.equalsIgnoreCase(sha256Lower(targetFile))))) {
                             copyFileAtomically(targetFile, backupFile);
                             hadOriginal = true;
                         } else {
@@ -610,9 +643,39 @@ public class ShellBridgeServer {
                     }
                 }
 
-                copyFileAtomically(src, targetFile);
+                // التعديل الموضعي لكتالوج الأصول الحي (In-Place Catalog Patching):
+                // بدلاً من استبدال assetbundlecatalog.asset كاملاً، نحدّث فقط size و CRC32 للحزم المعرّبة داخل الكتالوج الحي على الجهاز!
+                boolean appliedInPlace = false;
+                if (stagedCatalogFiles.contains(src) && targetFile.isFile()) {
+                    try {
+                        if (listener != null) {
+                            listener.onProgress(86, "جارٍ التعديل الموضعي لكتالوج الأصول الحي (In-Place Catalog Patch)...");
+                        }
+                        // نستخدم النسخة الأصلية النظيفة (backupFile إن وُجدت) أو الملف الحي كأساس للتعديل الموضعي
+                        File liveBase = (hadOriginal && backupFile.isFile()) ? backupFile : targetFile;
+                        Map<String, long[]> overrides = UnityCatalogPatcher.extractOverrides(
+                                src, stagedNonCatalogUnityBundles, catalogPatchJsonFile
+                        );
+                        if (!overrides.isEmpty()) {
+                            UnityCatalogPatcher.CatalogPatchResult res = UnityCatalogPatcher.patchLiveCatalogInPlace(
+                                    liveBase, targetFile, overrides
+                            );
+                            if (res.patchedInPlace) {
+                                appliedInPlace = true;
+                                inPlaceCatalogCount = res.updatedEntries;
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        appliedInPlace = false;
+                    }
+                }
 
-                BackupEntry newEntry = new BackupEntry(relFromFiles, targetFile.length(), hadOriginal);
+                if (!appliedInPlace) {
+                    copyFileAtomically(src, targetFile);
+                }
+
+                String finalSha256 = sha256Lower(targetFile);
+                BackupEntry newEntry = new BackupEntry(relFromFiles, targetFile.length(), hadOriginal, finalSha256);
                 nextManifest.entries.add(newEntry);
                 nextManifest.byPath.put(relFromFiles, newEntry);
 
@@ -627,7 +690,7 @@ public class ShellBridgeServer {
             }
             writeTextAtomically(manifestFile, serializeManifest(nextManifest));
 
-            return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + total;
+            return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + total + "|in_place=" + inPlaceCatalogCount;
         } catch (Throwable t) {
             return "ERR|" + t.getClass().getSimpleName() + ": " + t.getMessage();
         }
@@ -778,6 +841,25 @@ public class ShellBridgeServer {
         }
     }
 
+    public static String sha256Lower(File file) {
+        try (FileInputStream in = new FileInputStream(file)) {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[65536];
+            int read;
+            while ((read = in.read(buf)) > 0) {
+                md.update(buf, 0, read);
+            }
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : digest) {
+                sb.append(String.format(Locale.US, "%02x", b & 0xFF));
+            }
+            return sb.toString();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
     public static BackupManifest parseManifest(String text) {
         BackupManifest m = new BackupManifest();
         if (text == null || text.isEmpty()) {
@@ -798,10 +880,11 @@ public class ShellBridgeServer {
                 } catch (Throwable ignored) {
                 }
             } else if (line.startsWith("entry=")) {
-                String[] parts = line.substring("entry=".length()).split("\\|");
+                String[] parts = line.substring("entry=".length()).split("\\|", -1);
                 if (parts.length >= 3) {
                     try {
-                        BackupEntry entry = new BackupEntry(parts[0], Long.parseLong(parts[1]), Boolean.parseBoolean(parts[2]));
+                        String sha = parts.length >= 4 ? parts[3] : "";
+                        BackupEntry entry = new BackupEntry(parts[0], Long.parseLong(parts[1]), Boolean.parseBoolean(parts[2]), sha);
                         m.entries.add(entry);
                         m.byPath.put(entry.relPath, entry);
                     } catch (Throwable ignored) {
@@ -818,7 +901,11 @@ public class ShellBridgeServer {
         sb.append("target_subpath=").append(m.targetSubpath).append('\n');
         sb.append("installed_at=").append(m.installedAt).append('\n');
         for (BackupEntry e : m.entries) {
-            sb.append("entry=").append(e.relPath).append('|').append(e.patchedSize).append('|').append(e.hadOriginal).append('\n');
+            sb.append("entry=").append(e.relPath)
+                    .append('|').append(e.patchedSize)
+                    .append('|').append(e.hadOriginal)
+                    .append('|').append(e.patchedSha256)
+                    .append('\n');
         }
         return sb.toString();
     }
