@@ -69,6 +69,9 @@ public final class PatchManifest {
     public final boolean securityMaintenance;
     public final String securityMessage;
     public final String feedbackWebhookUrl;
+    public final String fontBundleUrl;
+    public final String fontBundleSha256;
+    public final long fontBundleSize;
     public final String rawJson;
 
     public PatchManifest(
@@ -177,6 +180,75 @@ public final class PatchManifest {
             String feedbackWebhookUrl,
             String rawJson
     ) {
+        this(
+                patchVersion, latestPatchVersion, gameVersion, latestGameVersion, targetGameVersionCode,
+                expectedLangOrigMd5, expectedLangOrigSize,
+                expectedPatchedLangMd5, expectedPatchedLangSha256, expectedPatchedLangSize,
+                expectedForceConfSize, releaseDate, changelog, downloadUrl, sha256, sizeBytes,
+                targetSubpath, channel,
+                iconUrl, iconHash, bannerUrl, bannerHash, heroMediaUrl, heroMediaHash,
+                heroEyebrow, displayTitle, heroTagline, badgeLabel, socialLabel, socialUrl,
+                screenshotsUrls, screenshotsHash,
+                storeTitle, storeSummary, storeDeveloper, storeScore, storeInstalls, storeContentRating,
+                statsTranslatedStrings, statsTotalRows, statsEngine, statsPatchSizeMb,
+                securitySafe, securityMaintenance, securityMessage, feedbackWebhookUrl,
+                "", "", 0L,
+                rawJson
+        );
+    }
+
+    public PatchManifest(
+            String patchVersion,
+            String latestPatchVersion,
+            String gameVersion,
+            String latestGameVersion,
+            long targetGameVersionCode,
+            String expectedLangOrigMd5,
+            long expectedLangOrigSize,
+            String expectedPatchedLangMd5,
+            String expectedPatchedLangSha256,
+            long expectedPatchedLangSize,
+            long expectedForceConfSize,
+            String releaseDate,
+            String changelog,
+            String downloadUrl,
+            String sha256,
+            long sizeBytes,
+            String targetSubpath,
+            String channel,
+            String iconUrl,
+            String iconHash,
+            String bannerUrl,
+            String bannerHash,
+            String heroMediaUrl,
+            String heroMediaHash,
+            String heroEyebrow,
+            String displayTitle,
+            String heroTagline,
+            String badgeLabel,
+            String socialLabel,
+            String socialUrl,
+            List<String> screenshotsUrls,
+            String screenshotsHash,
+            String storeTitle,
+            String storeSummary,
+            String storeDeveloper,
+            String storeScore,
+            String storeInstalls,
+            String storeContentRating,
+            int statsTranslatedStrings,
+            int statsTotalRows,
+            String statsEngine,
+            String statsPatchSizeMb,
+            boolean securitySafe,
+            boolean securityMaintenance,
+            String securityMessage,
+            String feedbackWebhookUrl,
+            String fontBundleUrl,
+            String fontBundleSha256,
+            long fontBundleSize,
+            String rawJson
+    ) {
         this.patchVersion = patchVersion != null ? patchVersion.trim() : "1.0.0";
         this.latestPatchVersion = (latestPatchVersion != null && !latestPatchVersion.trim().isEmpty())
                 ? latestPatchVersion.trim()
@@ -237,6 +309,9 @@ public final class PatchManifest {
         this.securityMaintenance = securityMaintenance;
         this.securityMessage = securityMessage != null ? securityMessage.trim() : "";
         this.feedbackWebhookUrl = feedbackWebhookUrl != null ? feedbackWebhookUrl.trim() : "";
+        this.fontBundleUrl = fontBundleUrl != null ? fontBundleUrl.trim() : "";
+        this.fontBundleSha256 = fontBundleSha256 != null ? fontBundleSha256.trim().toLowerCase() : "";
+        this.fontBundleSize = Math.max(0L, fontBundleSize);
         this.rawJson = rawJson != null ? rawJson : "";
     }
 
@@ -255,7 +330,9 @@ public final class PatchManifest {
                 screenshotsUrls, screenshotsHash,
                 storeTitle, storeSummary, storeDeveloper, storeScore, storeInstalls, storeContentRating,
                 statsTranslatedStrings, statsTotalRows, statsEngine, statsPatchSizeMb,
-                securitySafe, securityMaintenance, securityMessage, feedbackWebhookUrl, rawJson
+                securitySafe, securityMaintenance, securityMessage, feedbackWebhookUrl,
+                fontBundleUrl, fontBundleSha256, fontBundleSize,
+                rawJson
         );
     }
 
@@ -425,6 +502,9 @@ public final class PatchManifest {
                 secMaint,
                 secMsg,
                 feedbackWebhook,
+                obj.optString("font_bundle_url", ""),
+                obj.optString("font_bundle_sha256", ""),
+                obj.optLong("font_bundle_size", 0L),
                 jsonText
         );
     }

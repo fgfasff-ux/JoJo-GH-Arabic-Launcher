@@ -49,6 +49,30 @@ final class BrownDust2PatchEngine {
     private static final int PBKDF2_ITERS = 2010;
     private static final byte[] SQLITE_MAGIC = "SQLite format 3\0".getBytes(StandardCharsets.US_ASCII);
 
+    /**
+     * قاعدة بيانات شاشة العنوان المبدئية (IntroDB) تُستخرج تلقائياً من split_base_assets.apk عند كل إقلاع
+     * (Resources/DBData/Intro) وتُستبدل فوراً من اللعبة؛ استبعادها يمنع تنبيهات OTA_CHANGED الكاذبة
+     * مع الإبقاء على حقن جميع قواعد Data/t/* الـ 83+ الدائمة بالكامل.
+     */
+    private static final String APK_OVERWRITTEN_INTRO_DB = "Data/8ED5EF57D728FF5049FF5C80FE27F46AB3C16DE7";
+
+    /**
+     * مسار حزمة الخط العربي (TT-UDShinGoStdTC-Med/DeB مع حروف عربية كاملة) ومسار كتالوج Addressables الحي.
+     */
+    static final String FONT_BUNDLE_REL_PATH = "Data/rdav_bd2_fonts.bundle";
+    static final String CATALOG_ALPHA_REL_PATH = "com.unity.addressables/catalog_alpha.json";
+    private static final String ORIG_SHARED_BUNDLE_ID =
+            "{UnityEngine.AddressableAssets.Addressables.RuntimePath}/shared-game-default_assets_all.bundle";
+    private static final String ARABIC_FONT_BUNDLE_ID =
+            "{UnityEngine.Application.persistentDataPath}/" + FONT_BUNDLE_REL_PATH;
+
+    private static boolean isExcludedIntroDb(String relPath) {
+        if (relPath == null) {
+            return false;
+        }
+        return APK_OVERWRITTEN_INTRO_DB.equalsIgnoreCase(relPath.replace('\\', '/'));
+    }
+
     private static final Set<String> SKIP_TEXT_TABLES = new HashSet<>(Arrays.asList(
             "idcardtextcolorttable",
             "textdescriptiontable",
@@ -123,6 +147,7 @@ final class BrownDust2PatchEngine {
     private static final class SingleDbPatchResult {
         boolean modified;
         int patchedRows;
+        int alreadyMatchedRows;
         long origSize;
         long finalSize;
     }
@@ -419,11 +444,13 @@ final class BrownDust2PatchEngine {
     private static final class PbPatchResult {
         final byte[] bytes;
         final int hits;
+        final int alreadyMatched;
         final boolean changed;
 
-        PbPatchResult(byte[] bytes, int hits, boolean changed) {
+        PbPatchResult(byte[] bytes, int hits, int alreadyMatched, boolean changed) {
             this.bytes = bytes;
             this.hits = hits;
+            this.alreadyMatched = alreadyMatched;
             this.changed = changed;
         }
     }
@@ -436,19 +463,20 @@ final class BrownDust2PatchEngine {
             int[] trimFields
     ) {
         if (blob == null || blob.length == 0 || targetFields == null || targetFields.length == 0) {
-            return new PbPatchResult(blob, 0, false);
+            return new PbPatchResult(blob, 0, 0, false);
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream(blob.length + 64);
         int pos = 0;
         int end = blob.length;
         int hits = 0;
+        int alreadyMatched = 0;
         boolean changed = false;
 
         while (pos < end) {
             int tagStart = pos;
             VarintRead tagR = readVarint(blob, pos);
             if (!tagR.ok || tagR.value == 0) {
-                return new PbPatchResult(blob, 0, false);
+                return new PbPatchResult(blob, 0, 0, false);
             }
             int fieldNum = (int) (tagR.value >>> 3);
             int wireType = (int) (tagR.value & 0x07L);
@@ -459,14 +487,14 @@ final class BrownDust2PatchEngine {
                 int vStart = pos;
                 VarintRead vr = readVarint(blob, pos);
                 if (!vr.ok) {
-                    return new PbPatchResult(blob, 0, false);
+                    return new PbPatchResult(blob, 0, 0, false);
                 }
                 pos = vr.nextPos;
                 out.write(blob, tagStart, tagEnd - tagStart);
                 out.write(blob, vStart, pos - vStart);
             } else if (wireType == 1) {
                 if (pos + 8 > end) {
-                    return new PbPatchResult(blob, 0, false);
+                    return new PbPatchResult(blob, 0, 0, false);
                 }
                 out.write(blob, tagStart, tagEnd - tagStart);
                 out.write(blob, pos, 8);
@@ -474,7 +502,7 @@ final class BrownDust2PatchEngine {
             } else if (wireType == 2) {
                 VarintRead lr = readVarint(blob, pos);
                 if (!lr.ok || lr.value < 0 || lr.value > end - lr.nextPos) {
-                    return new PbPatchResult(blob, 0, false);
+                    return new PbPatchResult(blob, 0, 0, false);
                 }
                 int ln = (int) lr.value;
                 pos = lr.nextPos;
@@ -494,10 +522,14 @@ final class BrownDust2PatchEngine {
                             rep = dictFallback.get(cur.trim());
                         }
                     }
-                    if (rep != null && !rep.isEmpty() && !rep.equals(cur)) {
-                        newChunk = rep.getBytes(StandardCharsets.UTF_8);
-                        hits++;
-                        changed = true;
+                    if (rep != null && !rep.isEmpty()) {
+                        if (!rep.equals(cur)) {
+                            newChunk = rep.getBytes(StandardCharsets.UTF_8);
+                            hits++;
+                            changed = true;
+                        } else {
+                            alreadyMatched++;
+                        }
                     }
                 } else if (containsInt(trimFields, fieldNum) && ln > 0) {
                     newChunk = new byte[0];
@@ -518,17 +550,17 @@ final class BrownDust2PatchEngine {
                 }
             } else if (wireType == 5) {
                 if (pos + 4 > end) {
-                    return new PbPatchResult(blob, 0, false);
+                    return new PbPatchResult(blob, 0, 0, false);
                 }
                 out.write(blob, tagStart, tagEnd - tagStart);
                 out.write(blob, pos, 4);
                 pos += 4;
             } else {
-                return new PbPatchResult(blob, 0, false);
+                return new PbPatchResult(blob, 0, 0, false);
             }
         }
 
-        return new PbPatchResult(changed ? out.toByteArray() : blob, hits, changed);
+        return new PbPatchResult(changed ? out.toByteArray() : blob, hits, alreadyMatched, changed);
     }
 
     // =========================================================================
@@ -651,7 +683,7 @@ final class BrownDust2PatchEngine {
         try {
             decryptFileStreaming(srcEncFile, tmpPlain);
 
-            int patchedRows = 0;
+            int[] rowCounters = new int[2]; // [0]=patchedRows, [1]=alreadyMatchedRows
             List<ModifiedPbRow> modifiedPbRows = new ArrayList<>();
 
             SQLiteDatabase db = SQLiteDatabase.openDatabase(
@@ -728,15 +760,15 @@ final class BrownDust2PatchEngine {
                                         args[k - off] = targetIds.get(k);
                                     }
                                     String query = "SELECT rowid, \"id\", " + colSql + " FROM \"" + tbl + "\" WHERE \"id\" IN (" + placeholders + ")";
-                                    patchedRows += patchCursorRows(
-                                            db, query, args, tbl, tl, spec, hasPb, selectCols, idMap, dictFallback, updateStmt, modifiedPbRows
+                                    patchCursorRows(
+                                            db, query, args, tbl, tl, spec, hasPb, selectCols, idMap, dictFallback, updateStmt, modifiedPbRows, rowCounters
                                     );
                                 }
                             } else {
                                 // المسار الشامل بالقاموس الاحتياطي (OTA-Resilient Fallback)
                                 String query = "SELECT rowid, " + (hasIdCol ? "\"id\"" : "rowid") + ", " + colSql + " FROM \"" + tbl + "\"";
-                                patchedRows += patchCursorRows(
-                                        db, query, null, tbl, tl, spec, hasPb, selectCols, idMap, dictFallback, updateStmt, modifiedPbRows
+                                patchCursorRows(
+                                        db, query, null, tbl, tl, spec, hasPb, selectCols, idMap, dictFallback, updateStmt, modifiedPbRows, rowCounters
                                 );
                             }
                         } finally {
@@ -750,6 +782,10 @@ final class BrownDust2PatchEngine {
             } finally {
                 db.close();
             }
+
+            int patchedRows = rowCounters[0];
+            int alreadyMatchedRows = rowCounters[1];
+            result.alreadyMatchedRows = alreadyMatchedRows;
 
             if (patchedRows == 0) {
                 result.modified = false;
@@ -883,7 +919,7 @@ final class BrownDust2PatchEngine {
         }
     }
 
-    private static int patchCursorRows(
+    private static void patchCursorRows(
             SQLiteDatabase db,
             String query,
             String[] args,
@@ -895,9 +931,11 @@ final class BrownDust2PatchEngine {
             Map<String, RowPatchValue> idMap,
             Map<String, String> dictFallback,
             SQLiteStatement updateStmt,
-            List<ModifiedPbRow> modifiedPbRows
+            List<ModifiedPbRow> modifiedPbRows,
+            int[] rowCounters
     ) {
         int hitsHere = 0;
+        int alreadyHere = 0;
         int sqlColCount = spec.sqlCols.size();
         try (Cursor c = db.rawQuery(query, args)) {
             while (c.moveToNext()) {
@@ -909,6 +947,7 @@ final class BrownDust2PatchEngine {
                 boolean[] isNullStr = new boolean[sqlColCount];
                 boolean rowChanged = false;
                 int rowHits = 0;
+                int rowAlready = 0;
 
                 for (int i = 0; i < sqlColCount; i++) {
                     int colIdx = 2 + i;
@@ -935,10 +974,14 @@ final class BrownDust2PatchEngine {
                         rep = dictFallback.get(cur);
                         if (rep == null) rep = dictFallback.get(cur.trim());
                     }
-                    if (rep != null && !rep.isEmpty() && !rep.equals(cur)) {
-                        newStrVals[i] = rep;
-                        rowChanged = true;
-                        rowHits++;
+                    if (rep != null && !rep.isEmpty()) {
+                        if (!rep.equals(cur)) {
+                            newStrVals[i] = rep;
+                            rowChanged = true;
+                            rowHits++;
+                        } else {
+                            rowAlready++;
+                        }
                     }
                 }
 
@@ -979,6 +1022,8 @@ final class BrownDust2PatchEngine {
                                             tbl, rowid, origBlob, spec.pbFields, spec.trimOverflowFields, fixedMap
                                     ));
                                 }
+                            } else if (pr.alreadyMatched > 0 && sqlColCount == 0) {
+                                rowAlready += pr.alreadyMatched;
                             }
                         }
                     }
@@ -1004,10 +1049,13 @@ final class BrownDust2PatchEngine {
                     updateStmt.bindLong(bindPos, rowid);
                     updateStmt.executeUpdateDelete();
                     hitsHere += Math.max(1, rowHits);
+                } else if (rowAlready > 0) {
+                    alreadyHere += rowAlready;
                 }
             }
         }
-        return hitsHere;
+        rowCounters[0] += hitsHere;
+        rowCounters[1] += alreadyHere;
     }
 
     private static int[] intersectInts(int[] a, int[] b) {
@@ -1150,6 +1198,9 @@ final class BrownDust2PatchEngine {
         int missingMappedFiles = 0;
 
         for (String rel : payload.files.keySet()) {
+            if (isExcludedIntroDb(rel)) {
+                continue;
+            }
             File f = new File(filesDir, rel);
             if (isEncryptedBd2SqliteFile(f)) {
                 targets.put(rel, f);
@@ -1158,7 +1209,7 @@ final class BrownDust2PatchEngine {
             }
         }
 
-        // إذا تغيّرت أسماء بعض الملفات بسبب تحديث OTA أو كان القاموس مسطّحاً -> مسح كل Data/ و Data/t/ بالقاموس الاحتياطي
+        // إذا تغيّرت أسماء بعض الملفات بسبب تحديث OTA أو كان القاموس مسطّحاً -> مسح كل Data/t/ بالقاموس الاحتياطي
         if ((payload.files.isEmpty() || missingMappedFiles > 0) && !payload.dict.isEmpty()) {
             File dataDir = new File(filesDir, "Data");
             if (dataDir.isDirectory()) {
@@ -1172,6 +1223,9 @@ final class BrownDust2PatchEngine {
                         continue;
                     }
                     String rel = canon.substring(basePath.length()).replace('\\', '/');
+                    if (isExcludedIntroDb(rel)) {
+                        continue;
+                    }
                     if (!targets.containsKey(rel) && isEncryptedBd2SqliteFile(df)) {
                         targets.put(rel, df);
                     }
@@ -1241,6 +1295,18 @@ final class BrownDust2PatchEngine {
                         nextManifest.byPath.put(rel, newEntry);
                         out.patchedFiles++;
                         out.patchedRows += r.patchedRows;
+                    } else if (r.alreadyMatchedRows > 0) {
+                        // القاعدة معرّبة مسبقاً بنفس النصوص المطلوبة -> نُبقي تتبّعها في manifest.txt دون إعادة تشفير بلا داعٍ
+                        if (cleanSource != targetFile && cleanSource.isFile() && !targetFile.isFile()) {
+                            ShellBridgeServer.copyFileAtomically(cleanSource, targetFile);
+                        }
+                        String finalSha = ShellBridgeServer.sha256Lower(targetFile);
+                        ShellBridgeServer.BackupEntry newEntry =
+                                new ShellBridgeServer.BackupEntry(rel, targetFile.length(), backupFile.isFile(), finalSha);
+                        nextManifest.entries.add(newEntry);
+                        nextManifest.byPath.put(rel, newEntry);
+                        out.patchedFiles++;
+                        out.patchedRows += r.alreadyMatchedRows;
                     } else {
                         out.skippedFiles++;
                     }
@@ -1301,6 +1367,10 @@ final class BrownDust2PatchEngine {
         try {
             for (int i = 0; i < total; i++) {
                 String rel = relList.get(i);
+                if (isExcludedIntroDb(rel)) {
+                    out.skippedFiles++;
+                    continue;
+                }
                 String targetDocId = filesDocId + "/" + rel;
                 String backupDocId = origDirId + "/" + rel;
                 if (!SafHelper.docExists(context, treeUri, targetDocId)) {
@@ -1346,6 +1416,14 @@ final class BrownDust2PatchEngine {
                         nextManifest.byPath.put(rel, newEntry);
                         out.patchedFiles++;
                         out.patchedRows += r.patchedRows;
+                    } else if (r.alreadyMatchedRows > 0) {
+                        String finalSha = ShellBridgeServer.sha256Lower(localSrc);
+                        ShellBridgeServer.BackupEntry newEntry =
+                                new ShellBridgeServer.BackupEntry(rel, localSrc.length(), backupExists, finalSha);
+                        nextManifest.entries.add(newEntry);
+                        nextManifest.byPath.put(rel, newEntry);
+                        out.patchedFiles++;
+                        out.patchedRows += r.alreadyMatchedRows;
                     } else {
                         out.skippedFiles++;
                     }
@@ -1369,5 +1447,263 @@ final class BrownDust2PatchEngine {
             throw new IllegalStateException("لم يتم حقن أي قاعدة بيانات عبر SAF (" + out.failedFiles + " أخطاء).");
         }
         return out;
+    }
+
+    // =========================================================================
+    // 7) توجيه حزمة الخط العربي عبر catalog_alpha.json بتدفّق منخفض الذاكرة (Zero-OOM)
+    // =========================================================================
+
+    private static final class StreamReplaceResult {
+        int replacedCount;
+        int alreadyCount;
+    }
+
+    private static boolean matchesAt(byte[] buf, int offset, byte[] pattern) {
+        for (int j = 0; j < pattern.length; j++) {
+            if (buf[offset + j] != pattern[j]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static StreamReplaceResult streamReplaceAsciiBytes(
+            File srcFile,
+            File dstFile,
+            byte[] needle,
+            byte[] replacement,
+            byte[] alreadyMarker
+    ) throws IOException {
+        StreamReplaceResult res = new StreamReplaceResult();
+        final int bufSize = 262144; // 256 KB فقط — يمنع OOM تماماً على ملف catalog_alpha.json بحجم 62 MB
+        final int overlap = Math.max(needle.length, alreadyMarker != null ? alreadyMarker.length : 0) - 1;
+        byte[] buf = new byte[bufSize + Math.max(overlap, 0)];
+        int valid = 0;
+        byte n0 = needle[0];
+        byte a0 = (alreadyMarker != null && alreadyMarker.length > 0) ? alreadyMarker[0] : 0;
+
+        try (BufferedInputStream in = new BufferedInputStream(new FileInputStream(srcFile), 65536);
+             BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(dstFile), 65536)) {
+            boolean eof = false;
+            while (!eof || valid > 0) {
+                if (!eof) {
+                    int space = buf.length - valid;
+                    if (space > 0) {
+                        int r = in.read(buf, valid, space);
+                        if (r < 0) {
+                            eof = true;
+                        } else {
+                            valid += r;
+                        }
+                    }
+                }
+                int limit = eof ? valid : Math.max(0, valid - overlap);
+                int i = 0;
+                int emitStart = 0;
+                while (i < limit) {
+                    if (buf[i] == n0 && i + needle.length <= valid && matchesAt(buf, i, needle)) {
+                        if (i > emitStart) {
+                            out.write(buf, emitStart, i - emitStart);
+                        }
+                        out.write(replacement);
+                        res.replacedCount++;
+                        i += needle.length;
+                        emitStart = i;
+                    } else {
+                        if (alreadyMarker != null && buf[i] == a0 && i + alreadyMarker.length <= valid && matchesAt(buf, i, alreadyMarker)) {
+                            res.alreadyCount++;
+                        }
+                        i++;
+                    }
+                }
+                if (i > emitStart) {
+                    out.write(buf, emitStart, i - emitStart);
+                }
+                int remaining = valid - i;
+                if (remaining > 0) {
+                    System.arraycopy(buf, i, buf, 0, remaining);
+                }
+                valid = remaining;
+                if (eof && valid == 0) {
+                    break;
+                }
+            }
+            out.flush();
+        }
+        return res;
+    }
+
+    /**
+     * يفعّل حزمة الخط العربي (Data/rdav_bd2_fonts.bundle) عبر توجيه معرّف
+     * shared-game-default_assets_all.bundle في catalog_alpha.json مع نسخة احتياطية ذكية وتوافُق OTA.
+     */
+    static boolean applyArabicFontCatalogRedirectDirect(
+            File filesDir,
+            File origDir,
+            ShellBridgeServer.BackupManifest prevManifest,
+            ShellBridgeServer.BackupManifest nextManifest,
+            ShellBridgeServer.ProgressListener listener
+    ) {
+        try {
+            File fontBundle = new File(filesDir, FONT_BUNDLE_REL_PATH);
+            if (!fontBundle.isFile() || fontBundle.length() < 1024L * 1024L) {
+                return false;
+            }
+            // الحفاظ على تتبّع حزمة الخط العربي في manifest.txt حتى لو لم تأتِ في التحديث النصي الحالي
+            if (!nextManifest.byPath.containsKey(FONT_BUNDLE_REL_PATH)) {
+                String fontSha = ShellBridgeServer.sha256Lower(fontBundle);
+                ShellBridgeServer.BackupEntry fontEntry =
+                        new ShellBridgeServer.BackupEntry(FONT_BUNDLE_REL_PATH, fontBundle.length(), false, fontSha);
+                nextManifest.entries.add(fontEntry);
+                nextManifest.byPath.put(FONT_BUNDLE_REL_PATH, fontEntry);
+            }
+
+            File catalogFile = new File(filesDir, CATALOG_ALPHA_REL_PATH);
+            if (!catalogFile.isFile() || catalogFile.length() < 1024L) {
+                return false;
+            }
+
+            if (listener != null) {
+                listener.onProgress(95, "جارٍ ربط الخط العربي بكتالوج Addressables (catalog_alpha.json)...");
+            }
+
+            File backupFile = new File(origDir, CATALOG_ALPHA_REL_PATH);
+            long origMtime = catalogFile.lastModified();
+            File hashSibling = new File(catalogFile.getParentFile(), "catalog_alpha.hash");
+            if (hashSibling.isFile() && hashSibling.lastModified() > 0L) {
+                origMtime = hashSibling.lastModified();
+            }
+
+            ShellBridgeServer.BackupEntry prev = prevManifest.byPath.get(CATALOG_ALPHA_REL_PATH);
+            File cleanSource;
+            if (prev != null && prev.hadOriginal && backupFile.isFile()) {
+                boolean changedFromPatched = catalogFile.length() != prev.patchedSize
+                        || (!prev.patchedSha256.isEmpty() && !prev.patchedSha256.equalsIgnoreCase(ShellBridgeServer.sha256Lower(catalogFile)));
+                if (changedFromPatched) {
+                    boolean differsFromBackup = catalogFile.length() != backupFile.length()
+                            || !ShellBridgeServer.sha256Lower(catalogFile).equalsIgnoreCase(ShellBridgeServer.sha256Lower(backupFile));
+                    if (differsFromBackup) {
+                        ShellBridgeServer.copyFileAtomically(catalogFile, backupFile);
+                    }
+                }
+                cleanSource = backupFile;
+            } else {
+                if (!backupFile.isFile()) {
+                    ShellBridgeServer.copyFileAtomically(catalogFile, backupFile);
+                }
+                cleanSource = backupFile.isFile() ? backupFile : catalogFile;
+            }
+
+            File workDir = resolveFastWorkDir(origDir.getParentFile() != null ? origDir.getParentFile() : filesDir);
+            File tmpOut = new File(workDir, "catalog_alpha_ar_" + System.nanoTime() + ".json");
+            try {
+                byte[] needle = ORIG_SHARED_BUNDLE_ID.getBytes(StandardCharsets.UTF_8);
+                byte[] repl = ARABIC_FONT_BUNDLE_ID.getBytes(StandardCharsets.UTF_8);
+                StreamReplaceResult sr = streamReplaceAsciiBytes(cleanSource, tmpOut, needle, repl, repl);
+                if (sr.replacedCount > 0) {
+                    ShellBridgeServer.copyFileAtomically(tmpOut, catalogFile);
+                    if (origMtime > 0L) {
+                        try {
+                            catalogFile.setLastModified(origMtime);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    String finalSha = ShellBridgeServer.sha256Lower(catalogFile);
+                    ShellBridgeServer.BackupEntry catEntry =
+                            new ShellBridgeServer.BackupEntry(CATALOG_ALPHA_REL_PATH, catalogFile.length(), true, finalSha);
+                    nextManifest.entries.add(catEntry);
+                    nextManifest.byPath.put(CATALOG_ALPHA_REL_PATH, catEntry);
+                    return true;
+                } else if (sr.alreadyCount > 0) {
+                    String finalSha = ShellBridgeServer.sha256Lower(catalogFile);
+                    ShellBridgeServer.BackupEntry catEntry =
+                            new ShellBridgeServer.BackupEntry(CATALOG_ALPHA_REL_PATH, catalogFile.length(), backupFile.isFile(), finalSha);
+                    nextManifest.entries.add(catEntry);
+                    nextManifest.byPath.put(CATALOG_ALPHA_REL_PATH, catEntry);
+                    return true;
+                }
+                return false;
+            } finally {
+                tmpOut.delete();
+            }
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    static boolean applyArabicFontCatalogRedirectSaf(
+            Context context,
+            Uri treeUri,
+            String filesDocId,
+            String origDirId,
+            ShellBridgeServer.BackupManifest prevManifest,
+            ShellBridgeServer.BackupManifest nextManifest,
+            ShellBridgeServer.ProgressListener listener
+    ) {
+        File workDir = new File(context.getCacheDir(), "rdav_bd2_cat_saf_" + System.nanoTime());
+        workDir.mkdirs();
+        File localSrc = new File(workDir, "catalog_src.json");
+        File localDst = new File(workDir, "catalog_dst.json");
+        try {
+            String fontDocId = filesDocId + "/" + FONT_BUNDLE_REL_PATH;
+            if (!SafHelper.docExists(context, treeUri, fontDocId)) {
+                return false;
+            }
+            if (!nextManifest.byPath.containsKey(FONT_BUNDLE_REL_PATH)) {
+                long fLen = SafHelper.docLength(context, treeUri, fontDocId);
+                ShellBridgeServer.BackupEntry fontEntry =
+                        new ShellBridgeServer.BackupEntry(FONT_BUNDLE_REL_PATH, fLen, false);
+                nextManifest.entries.add(fontEntry);
+                nextManifest.byPath.put(FONT_BUNDLE_REL_PATH, fontEntry);
+            }
+
+            String catDocId = filesDocId + "/" + CATALOG_ALPHA_REL_PATH;
+            String catBakDocId = origDirId + "/" + CATALOG_ALPHA_REL_PATH;
+            if (!SafHelper.docExists(context, treeUri, catDocId)) {
+                return false;
+            }
+            if (listener != null) {
+                listener.onProgress(95, "جارٍ ربط الخط العربي بكتالوج Addressables عبر SAF...");
+            }
+
+            ShellBridgeServer.BackupEntry prev = prevManifest.byPath.get(CATALOG_ALPHA_REL_PATH);
+            boolean bakExists = SafHelper.docExists(context, treeUri, catBakDocId);
+            if (prev != null && prev.hadOriginal && bakExists) {
+                long tLen = SafHelper.docLength(context, treeUri, catDocId);
+                long bLen = SafHelper.docLength(context, treeUri, catBakDocId);
+                if (tLen != prev.patchedSize && tLen != bLen) {
+                    SafHelper.copySafToSaf(context, treeUri, catDocId, catBakDocId);
+                }
+            } else if (!bakExists) {
+                SafHelper.copySafToSaf(context, treeUri, catDocId, catBakDocId);
+                bakExists = true;
+            }
+
+            SafHelper.copySafToLocalFile(context, treeUri, bakExists ? catBakDocId : catDocId, localSrc);
+            byte[] needle = ORIG_SHARED_BUNDLE_ID.getBytes(StandardCharsets.UTF_8);
+            byte[] repl = ARABIC_FONT_BUNDLE_ID.getBytes(StandardCharsets.UTF_8);
+            StreamReplaceResult sr = streamReplaceAsciiBytes(localSrc, localDst, needle, repl, repl);
+            if (sr.replacedCount > 0 && localDst.isFile()) {
+                SafHelper.copyLocalFileToSaf(context, treeUri, localDst, catDocId);
+                String finalSha = ShellBridgeServer.sha256Lower(localDst);
+                ShellBridgeServer.BackupEntry catEntry =
+                        new ShellBridgeServer.BackupEntry(CATALOG_ALPHA_REL_PATH, localDst.length(), true, finalSha);
+                nextManifest.entries.add(catEntry);
+                nextManifest.byPath.put(CATALOG_ALPHA_REL_PATH, catEntry);
+                return true;
+            } else if (sr.alreadyCount > 0) {
+                String finalSha = ShellBridgeServer.sha256Lower(localSrc);
+                ShellBridgeServer.BackupEntry catEntry =
+                        new ShellBridgeServer.BackupEntry(CATALOG_ALPHA_REL_PATH, localSrc.length(), bakExists, finalSha);
+                nextManifest.entries.add(catEntry);
+                nextManifest.byPath.put(CATALOG_ALPHA_REL_PATH, catEntry);
+                return true;
+            }
+            return false;
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            ShellBridgeServer.deleteRecursive(workDir);
+        }
     }
 }

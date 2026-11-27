@@ -10,8 +10,8 @@ android {
         applicationId "com.jojo.gh.arabic.launcher"
         minSdk 24
         targetSdk 33
-        versionCode 27
-        versionName "3.7.0-release"
+        versionCode 28
+        versionName "3.7.1-release"
     }
 
     signingConfigs {

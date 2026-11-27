@@ -3696,6 +3696,7 @@ public class MainActivity extends Activity {
             stageDir.mkdirs();
             PatchDownloader.extractZipFile(cacheZip, stageDir, null, 0, 50);
             File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
+            ensureBd2FontBundleStaged(latestRemoteManifest, effectiveStage, 50, 55, false);
 
             PatchStrategy strategy = activeProfile != null ? activeProfile.patchStrategy : PatchStrategy.ASSET_REPLACE;
             strategy.validateStagedPayload(effectiveStage, activeProfile);
@@ -4653,8 +4654,9 @@ public class MainActivity extends Activity {
                         getInstalledGameApkSignatureSha256(activeProfile.packageName)
                 );
 
-                PatchDownloader.extractZipFile(zipFile, stageDir, this::updateProgress, 48, 58);
+                PatchDownloader.extractZipFile(zipFile, stageDir, this::updateProgress, 48, 55);
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
+                ensureBd2FontBundleStaged(manifest, effectiveStage, 55, 60, true);
 
                 executeInstallFromStage(mode, effectiveStage, manifest.patchVersion, manifest.resolveEffectiveSubpath());
             } catch (Throwable t) {
@@ -4730,6 +4732,7 @@ public class MainActivity extends Activity {
                         getInstalledGameApkSignatureSha256(activeProfile.packageName)
                 );
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
+                ensureBd2FontBundleStaged(latestRemoteManifest, effectiveStage, 58, 60, false);
                 executeInstallFromStage(mode, effectiveStage, "local-zip", activeProfile.patchStrategy.resolveDefaultTargetSubpath(""));
             } catch (Throwable t) {
                 String err = readableError(t);
@@ -4803,8 +4806,9 @@ public class MainActivity extends Activity {
                         getInstalledGameApkSignatureSha256(activeProfile.packageName)
                 );
 
-                PatchDownloader.extractZipFile(zipFile, stageDir, this::updateProgress, 55, 68);
+                PatchDownloader.extractZipFile(zipFile, stageDir, this::updateProgress, 55, 62);
                 File effectiveStage = PatchDownloader.resolveEffectiveStageRoot(stageDir);
+                ensureBd2FontBundleStaged(betaManifest, effectiveStage, 62, 68, true);
 
                 executeInstallFromStage(
                         mode,
@@ -4827,6 +4831,64 @@ public class MainActivity extends Activity {
                 refreshStatusAsync(null);
             }
         });
+    }
+
+    /**
+     * يحمّل حزمة الخط العربي للعبة BrownDust II (rdav_bd2_fonts.bundle) لمرة واحدة فقط ويخزّنها
+     * محلياً في كاش التطبيق الدائم مع التحقق من SHA-256، ثم يجهّزها داخل مجلد التثبيت المؤقت
+     * بحيث تبقى تحديثات النصوص المستقبلية خفيفة للغاية (~266 KB فقط).
+     */
+    private void ensureBd2FontBundleStaged(
+            PatchManifest manifest,
+            File effectiveStage,
+            int startPct,
+            int endPct,
+            boolean allowDownload
+    ) {
+        if (activeProfile == null || !"browndust2".equalsIgnoreCase(activeProfile.id) || effectiveStage == null) {
+            return;
+        }
+        try {
+            File stagedFont = new File(effectiveStage, BrownDust2PatchEngine.FONT_BUNDLE_REL_PATH);
+            if (stagedFont.isFile() && stagedFont.length() > 1024L * 1024L) {
+                return;
+            }
+            File fontCacheDir = new File(getFilesDir(), "bd2_font_cache");
+            if (!fontCacheDir.exists()) {
+                fontCacheDir.mkdirs();
+            }
+            File cachedFont = new File(fontCacheDir, "rdav_bd2_fonts.bundle");
+            String url = manifest != null ? manifest.fontBundleUrl : "";
+            String expectedSha = manifest != null ? manifest.fontBundleSha256 : "";
+            long expectedSize = manifest != null ? manifest.fontBundleSize : 0L;
+
+            boolean cacheValid = cachedFont.isFile() && cachedFont.length() > 1024L * 1024L;
+            if (cacheValid && !expectedSha.isEmpty()) {
+                String actualSha = ShellBridgeServer.sha256Lower(cachedFont);
+                if (!expectedSha.equalsIgnoreCase(actualSha)) {
+                    cacheValid = false;
+                }
+            }
+
+            if (!cacheValid && allowDownload && url != null && url.startsWith("https://")) {
+                updateProgress(startPct, "جارٍ تحميل حزمة الخط العربي لـ BrownDust II (لمرة واحدة فقط)...");
+                PatchDownloader.downloadToFile(url, cachedFont, expectedSize, this::updateProgress, startPct, endPct);
+                if (!expectedSha.isEmpty()) {
+                    PatchDownloader.verifySha256IfProvided(cachedFont, expectedSha);
+                }
+                cacheValid = cachedFont.isFile() && cachedFont.length() > 1024L * 1024L;
+            }
+
+            if (cacheValid) {
+                File parent = stagedFont.getParentFile();
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs();
+                }
+                ShellBridgeServer.copyFileAtomically(cachedFont, stagedFont);
+            }
+        } catch (Throwable ignored) {
+            // لا نوقف تثبيت النصوص لو تعذّر تحميل حزمة الخط؛ سيعمل تلقائياً عند توفر الخط محلياً أو لاحقاً
+        }
     }
 
     private void executeInstallFromStage(
@@ -4882,15 +4944,18 @@ public class MainActivity extends Activity {
         String[] parts = result.split("\\|");
         String fileCount = parts.length >= 4 ? parts[3] : "";
         String bd2RowsNote = "";
+        String bd2FontNote = "";
         for (String p : parts) {
             if (p != null && p.startsWith("bd2_rows=")) {
                 String rv = p.substring("bd2_rows=".length()).trim();
                 if (!rv.isEmpty() && !"0".equals(rv)) {
                     bd2RowsNote = " • " + rv + " صف عربي";
                 }
+            } else if ("bd2_font=1".equals(p)) {
+                bd2FontNote = " • خط عربي مفعّل";
             }
         }
-        updateProgress(100, "اكتمل تثبيت تعريب R.D.AV بنجاح (" + fileCount + " ملف" + bd2RowsNote + ") مع حفظ النسخة الاحتياطية ✓");
+        updateProgress(100, "اكتمل تثبيت تعريب R.D.AV بنجاح (" + fileCount + " ملف" + bd2RowsNote + bd2FontNote + ") مع حفظ النسخة الاحتياطية ✓");
         mainHandler.post(() -> Toast.makeText(this, "تم تثبيت تعريب " + activeProfile.title + " بنجاح ✓", Toast.LENGTH_LONG).show());
     }
 

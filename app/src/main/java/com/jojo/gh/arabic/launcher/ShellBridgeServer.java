@@ -630,10 +630,14 @@ public class ShellBridgeServer {
 
                 BackupEntry prev = prevManifest.byPath.get(relFromFiles);
                 boolean hadOriginal;
+                boolean isRdavCustomFontBundle = BrownDust2PatchEngine.FONT_BUNDLE_REL_PATH.equalsIgnoreCase(relFromFiles);
 
-                // النسخ الاحتياطي المحدّث تلقائياً (Fresh Backup on OTA):
-                // إذا تغيّر الملف الحي على الجهاز عن آخر نسخة معرّبة (بالحجم أو SHA-256)، نحدّث النسخة الأصلية في orig/ فوراً.
-                if (prev != null) {
+                if (isRdavCustomFontBundle) {
+                    // حزمة الخط العربي ملف مضاف من تعريب R.D.AV (ليست ملفاً أصلياً من اللعبة) -> تُحذف تلقائياً عند الاستعادة
+                    hadOriginal = false;
+                } else if (prev != null) {
+                    // النسخ الاحتياطي المحدّث تلقائياً (Fresh Backup on OTA):
+                    // إذا تغيّر الملف الحي على الجهاز عن آخر نسخة معرّبة (بالحجم أو SHA-256)، نحدّث النسخة الأصلية في orig/ فوراً.
                     if (prev.hadOriginal && backupFile.isFile()) {
                         if (targetFile.isFile()) {
                             boolean changedFromPatched = targetFile.length() != prev.patchedSize
@@ -711,12 +715,18 @@ public class ShellBridgeServer {
                 }
 
                 if (!appliedInPlace) {
-                    long origMtime = targetFile.isFile() ? targetFile.lastModified() : 0L;
-                    copyFileAtomically(src, targetFile);
-                    if (origMtime > 0L) {
-                        try {
-                            targetFile.setLastModified(origMtime);
-                        } catch (Throwable ignored) {
+                    boolean skipIdenticalCustomFont = isRdavCustomFontBundle
+                            && targetFile.isFile()
+                            && targetFile.length() == src.length()
+                            && sha256Lower(targetFile).equalsIgnoreCase(sha256Lower(src));
+                    if (!skipIdenticalCustomFont) {
+                        long origMtime = targetFile.isFile() ? targetFile.lastModified() : 0L;
+                        copyFileAtomically(src, targetFile);
+                        if (origMtime > 0L) {
+                            try {
+                                targetFile.setLastModified(origMtime);
+                            } catch (Throwable ignored) {
+                            }
                         }
                     }
                 }
@@ -730,6 +740,14 @@ public class ShellBridgeServer {
                     int pct = 64 + ((i + 1) * 32) / total;
                     listener.onProgress(pct, "جارٍ تثبيت ملفات التعريب والنسخ الاحتياطي (" + (i + 1) + "/" + total + ")...");
                 }
+            }
+
+            boolean bd2FontRedirected = false;
+            if (bd2LightJsonFile != null
+                    || (targetPackage != null && "com.neowizgames.game.browndust2".equals(targetPackage.trim()))) {
+                bd2FontRedirected = BrownDust2PatchEngine.applyArabicFontCatalogRedirectDirect(
+                        filesDir, origDir, prevManifest, nextManifest, listener
+                );
             }
 
             for (BackupEntry oldEntry : prevManifest.entries) {
@@ -751,7 +769,8 @@ public class ShellBridgeServer {
             writeTextAtomically(manifestFile, serializeManifest(nextManifest));
 
             return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + nextManifest.entries.size()
-                    + "|in_place=" + inPlaceCatalogCount + "|bd2_rows=" + bd2PatchedRows;
+                    + "|in_place=" + inPlaceCatalogCount + "|bd2_rows=" + bd2PatchedRows
+                    + "|bd2_font=" + (bd2FontRedirected ? "1" : "0");
         } catch (Throwable t) {
             return "ERR|" + t.getClass().getSimpleName() + ": " + t.getMessage();
         }

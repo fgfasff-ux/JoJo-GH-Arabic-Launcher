@@ -557,8 +557,11 @@ public final class SafHelper {
                 boolean targetExists = docExists(context, treeUri, targetDocId);
                 boolean backupExists = docExists(context, treeUri, backupDocId);
                 boolean hadOriginal;
+                boolean isRdavCustomFontBundle = BrownDust2PatchEngine.FONT_BUNDLE_REL_PATH.equalsIgnoreCase(relFromFiles);
 
-                if (prev != null) {
+                if (isRdavCustomFontBundle) {
+                    hadOriginal = false;
+                } else if (prev != null) {
                     if (prev.hadOriginal && backupExists) {
                         if (targetExists) {
                             long tLen = docLength(context, treeUri, targetDocId);
@@ -605,6 +608,14 @@ public final class SafHelper {
                 }
             }
 
+            boolean bd2FontRedirected = false;
+            if (bd2LightJsonFile != null
+                    || (targetPackage != null && "com.neowizgames.game.browndust2".equals(targetPackage.trim()))) {
+                bd2FontRedirected = BrownDust2PatchEngine.applyArabicFontCatalogRedirectSaf(
+                        context, treeUri, filesDocId, origDirId, prevManifest, nextManifest, listener
+                );
+            }
+
             for (ShellBridgeServer.BackupEntry oldEntry : prevManifest.entries) {
                 if (!nextManifest.byPath.containsKey(oldEntry.relPath)) {
                     String oldTargetId = filesDocId + "/" + oldEntry.relPath;
@@ -624,7 +635,8 @@ public final class SafHelper {
             writeBytesToSaf(context, treeUri, manifestDocId,
                     ShellBridgeServer.serializeManifest(nextManifest).getBytes(StandardCharsets.UTF_8));
 
-            return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + nextManifest.entries.size() + "|bd2_rows=" + bd2PatchedRows;
+            return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + nextManifest.entries.size()
+                    + "|bd2_rows=" + bd2PatchedRows + "|bd2_font=" + (bd2FontRedirected ? "1" : "0");
         } catch (Throwable t) {
             return "ERR|" + t.getClass().getSimpleName() + ": " + t.getMessage();
         }
