@@ -408,6 +408,42 @@ public final class PatchDownloader {
             throw new IOException("تعذر إنشاء مجلد التجهيز المؤقت");
         }
         String canonicalBase = stagingDir.getCanonicalPath() + File.separator;
+
+        // دعم مباشر لملفات القاموس الخفيف غير المضغوطة (browndust2_ar.json) إلى جانب ملفات ZIP
+        if (rawInput.markSupported()) {
+            rawInput.mark(16);
+            byte[] head = new byte[4];
+            int hr = rawInput.read(head);
+            rawInput.reset();
+            boolean looksJson = false;
+            if (hr >= 1) {
+                int idx = 0;
+                if (hr >= 3 && (head[0] & 0xFF) == 0xEF && (head[1] & 0xFF) == 0xBB && (head[2] & 0xFF) == 0xBF) {
+                    idx = 3;
+                }
+                if (idx < hr && (head[idx] == '{' || head[idx] == ' ' || head[idx] == '\n' || head[idx] == '\r' || head[idx] == '\t')) {
+                    if (head[idx] == '{') {
+                        looksJson = true;
+                    }
+                }
+            }
+            if (looksJson) {
+                File jsonDst = new File(stagingDir, "browndust2_ar.json");
+                try (BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(jsonDst), 65536)) {
+                    byte[] buf = new byte[65536];
+                    int r;
+                    while ((r = rawInput.read(buf)) > 0) {
+                        out.write(buf, 0, r);
+                    }
+                    out.flush();
+                }
+                if (callback != null) {
+                    callback.onProgress(endPct, "تم تجهيز ملف القاموس الخفيف (browndust2_ar.json) ✓");
+                }
+                return 1;
+            }
+        }
+
         int extractedCount = 0;
 
         try (ZipInputStream zis = new ZipInputStream(rawInput)) {

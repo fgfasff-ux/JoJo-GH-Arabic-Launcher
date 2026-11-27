@@ -16,6 +16,7 @@ import android.provider.DocumentsContract;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -491,17 +492,21 @@ public final class SafHelper {
             }
             Collections.sort(rawStagedFiles, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
 
+            File bd2LightJsonFile = null;
             List<File> stagedFiles = new ArrayList<>(rawStagedFiles.size());
             for (File f : rawStagedFiles) {
                 String nm = f.getName();
-                if ("addressables_patch_manifest.json".equalsIgnoreCase(nm)
+                if ("browndust2_ar.json".equalsIgnoreCase(nm)) {
+                    bd2LightJsonFile = f;
+                } else if ("addressables_patch_manifest.json".equalsIgnoreCase(nm)
                         || "extra_textures_manifest.json".equalsIgnoreCase(nm)
                         || "catalog_patch.json".equalsIgnoreCase(nm)) {
                     continue;
+                } else {
+                    stagedFiles.add(f);
                 }
-                stagedFiles.add(f);
             }
-            if (stagedFiles.isEmpty()) {
+            if (stagedFiles.isEmpty() && bd2LightJsonFile == null) {
                 return "ERR|EMPTY_STAGE";
             }
 
@@ -517,7 +522,6 @@ public final class SafHelper {
                     ? ShellBridgeServer.parseManifest(readTextFromSaf(context, treeUri, manifestDocId))
                     : new ShellBridgeServer.BackupManifest();
 
-            Set<String> newRelPaths = new HashSet<>();
             List<String> orderedRelPaths = new ArrayList<>(stagedFiles.size());
             for (File f : stagedFiles) {
                 String canonical = f.getCanonicalPath();
@@ -526,27 +530,21 @@ public final class SafHelper {
                 }
                 String rel = canonical.substring(stageBase.length()).replace('\\', '/');
                 String fullRel = resolveTargetRelativePathSaf(normSubpath, rel);
-                newRelPaths.add(fullRel);
                 orderedRelPaths.add(fullRel);
-            }
-
-            for (ShellBridgeServer.BackupEntry oldEntry : prevManifest.entries) {
-                if (!newRelPaths.contains(oldEntry.relPath)) {
-                    String oldTargetId = filesDocId + "/" + oldEntry.relPath;
-                    String oldBackupId = origDirId + "/" + oldEntry.relPath;
-                    if (oldEntry.hadOriginal && docExists(context, treeUri, oldBackupId)) {
-                        copySafToSaf(context, treeUri, oldBackupId, oldTargetId);
-                        deleteDocIfExists(context, treeUri, oldBackupId);
-                    } else if (!oldEntry.hadOriginal) {
-                        deleteDocIfExists(context, treeUri, oldTargetId);
-                    }
-                }
             }
 
             ShellBridgeServer.BackupManifest nextManifest = new ShellBridgeServer.BackupManifest();
             nextManifest.patchVersion = (patchVersion != null && !patchVersion.isEmpty()) ? patchVersion : "1.0.0";
             nextManifest.targetSubpath = normSubpath;
             nextManifest.installedAt = System.currentTimeMillis();
+
+            int bd2PatchedRows = 0;
+            if (bd2LightJsonFile != null) {
+                BrownDust2PatchEngine.LightPatchResult bd2Res = BrownDust2PatchEngine.applyLightPatchSaf(
+                        context, treeUri, filesDocId, origDirId, prevManifest, nextManifest, bd2LightJsonFile, listener
+                );
+                bd2PatchedRows = bd2Res.patchedRows;
+            }
 
             int total = stagedFiles.size();
             for (int i = 0; i < total; i++) {
@@ -607,13 +605,26 @@ public final class SafHelper {
                 }
             }
 
+            for (ShellBridgeServer.BackupEntry oldEntry : prevManifest.entries) {
+                if (!nextManifest.byPath.containsKey(oldEntry.relPath)) {
+                    String oldTargetId = filesDocId + "/" + oldEntry.relPath;
+                    String oldBackupId = origDirId + "/" + oldEntry.relPath;
+                    if (oldEntry.hadOriginal && docExists(context, treeUri, oldBackupId)) {
+                        copySafToSaf(context, treeUri, oldBackupId, oldTargetId);
+                        deleteDocIfExists(context, treeUri, oldBackupId);
+                    } else if (!oldEntry.hadOriginal) {
+                        deleteDocIfExists(context, treeUri, oldTargetId);
+                    }
+                }
+            }
+
             if (listener != null) {
                 listener.onProgress(98, "جارٍ حفظ سجل النسخ الاحتياطي...");
             }
             writeBytesToSaf(context, treeUri, manifestDocId,
                     ShellBridgeServer.serializeManifest(nextManifest).getBytes(StandardCharsets.UTF_8));
 
-            return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + total;
+            return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + nextManifest.entries.size() + "|bd2_rows=" + bd2PatchedRows;
         } catch (Throwable t) {
             return "ERR|" + t.getClass().getSimpleName() + ": " + t.getMessage();
         }
@@ -722,7 +733,7 @@ public final class SafHelper {
         return created;
     }
 
-    private static void copyLocalFileToSaf(Context context, Uri treeUri, File localFile, String dstDocId) throws Exception {
+    static void copyLocalFileToSaf(Context context, Uri treeUri, File localFile, String dstDocId) throws Exception {
         Uri dstUri = ensureFileUri(context, treeUri, dstDocId);
         try (FileInputStream in = new FileInputStream(localFile);
              OutputStream out = context.getContentResolver().openOutputStream(dstUri, "wt")) {
@@ -738,7 +749,27 @@ public final class SafHelper {
         }
     }
 
-    private static void copySafToSaf(Context context, Uri treeUri, String srcDocId, String dstDocId) throws Exception {
+    static void copySafToLocalFile(Context context, Uri treeUri, String srcDocId, File localDst) throws Exception {
+        Uri srcUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, srcDocId);
+        File parent = localDst.getParentFile();
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs();
+        }
+        try (InputStream in = context.getContentResolver().openInputStream(srcUri);
+             FileOutputStream out = new FileOutputStream(localDst)) {
+            if (in == null) {
+                throw new IllegalStateException("تعذر قراءة الملف عبر SAF: " + srcDocId);
+            }
+            byte[] buf = new byte[65536];
+            int read;
+            while ((read = in.read(buf)) > 0) {
+                out.write(buf, 0, read);
+            }
+            out.flush();
+        }
+    }
+
+    static void copySafToSaf(Context context, Uri treeUri, String srcDocId, String dstDocId) throws Exception {
         Uri srcUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, srcDocId);
         Uri dstUri = ensureFileUri(context, treeUri, dstDocId);
         ContentResolver cr = context.getContentResolver();

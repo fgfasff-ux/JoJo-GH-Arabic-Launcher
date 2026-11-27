@@ -4679,8 +4679,8 @@ public class MainActivity extends Activity {
         }
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/zip");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/octet-stream"});
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/json", "application/octet-stream"});
         try {
             startActivityForResult(intent, REQ_PICK_LOCAL_ZIP);
         } catch (Throwable t) {
@@ -4847,7 +4847,7 @@ public class MainActivity extends Activity {
         if (mode == AccessMode.BRIDGE_ACTIVE) {
             result = sendBridgeCommandWithProgress(
                     "APPLY_INSTALL\t" + stageDir.getAbsolutePath() + "\t" + patchVersion + "\t" + normSubpath + "\t" + activePkg,
-                    180000,
+                    300000,
                     listener
             );
         } else if (mode == AccessMode.DIRECT_FS) {
@@ -4881,7 +4881,16 @@ public class MainActivity extends Activity {
 
         String[] parts = result.split("\\|");
         String fileCount = parts.length >= 4 ? parts[3] : "";
-        updateProgress(100, "اكتمل تثبيت تعريب R.D.AV بنجاح (" + fileCount + " ملف) مع حفظ النسخة الاحتياطية ✓");
+        String bd2RowsNote = "";
+        for (String p : parts) {
+            if (p != null && p.startsWith("bd2_rows=")) {
+                String rv = p.substring("bd2_rows=".length()).trim();
+                if (!rv.isEmpty() && !"0".equals(rv)) {
+                    bd2RowsNote = " • " + rv + " صف عربي";
+                }
+            }
+        }
+        updateProgress(100, "اكتمل تثبيت تعريب R.D.AV بنجاح (" + fileCount + " ملف" + bd2RowsNote + ") مع حفظ النسخة الاحتياطية ✓");
         mainHandler.post(() -> Toast.makeText(this, "تم تثبيت تعريب " + activeProfile.title + " بنجاح ✓", Toast.LENGTH_LONG).show());
     }
 

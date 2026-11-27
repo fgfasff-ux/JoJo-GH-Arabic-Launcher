@@ -542,12 +542,15 @@ public class ShellBridgeServer {
             }
             Collections.sort(rawStagedFiles, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
 
-            // فصل ملفات الفهرسة الوصفية (catalog_patch.json / addressables_patch_manifest.json) عن ملفات اللعبة الفعلية
+            // فصل ملفات الفهرسة الوصفية وملف قاموس BrownDust II الخفيف (browndust2_ar.json) عن ملفات الاستبدال المباشر
             File catalogPatchJsonFile = null;
+            File bd2LightJsonFile = null;
             List<File> stagedFiles = new ArrayList<>(rawStagedFiles.size());
             for (File f : rawStagedFiles) {
                 if ("catalog_patch.json".equalsIgnoreCase(f.getName())) {
                     catalogPatchJsonFile = f;
+                } else if ("browndust2_ar.json".equalsIgnoreCase(f.getName())) {
+                    bd2LightJsonFile = f;
                 } else if ("addressables_patch_manifest.json".equalsIgnoreCase(f.getName())
                         || "extra_textures_manifest.json".equalsIgnoreCase(f.getName())) {
                     continue;
@@ -555,7 +558,7 @@ public class ShellBridgeServer {
                     stagedFiles.add(f);
                 }
             }
-            if (stagedFiles.isEmpty()) {
+            if (stagedFiles.isEmpty() && bd2LightJsonFile == null) {
                 return "ERR|EMPTY_STAGE";
             }
 
@@ -601,23 +604,21 @@ public class ShellBridgeServer {
                 orderedRelPaths.add(fullRel);
             }
 
-            for (BackupEntry oldEntry : prevManifest.entries) {
-                if (!newRelPaths.contains(oldEntry.relPath)) {
-                    File oldTarget = new File(filesDir, oldEntry.relPath);
-                    File oldBackup = new File(origDir, oldEntry.relPath);
-                    if (oldEntry.hadOriginal && oldBackup.isFile()) {
-                        copyFileAtomically(oldBackup, oldTarget);
-                        oldBackup.delete();
-                    } else if (!oldEntry.hadOriginal && oldTarget.isFile()) {
-                        oldTarget.delete();
-                    }
-                }
-            }
-
             BackupManifest nextManifest = new BackupManifest();
             nextManifest.patchVersion = (patchVersion != null && !patchVersion.isEmpty()) ? patchVersion : "1.0.0";
             nextManifest.targetSubpath = normSubpath;
             nextManifest.installedAt = System.currentTimeMillis();
+
+            int bd2PatchedRows = 0;
+            if (bd2LightJsonFile != null) {
+                BrownDust2PatchEngine.LightPatchResult bd2Res = BrownDust2PatchEngine.applyLightPatchDirect(
+                        filesDir, origDir, prevManifest, nextManifest, bd2LightJsonFile, listener
+                );
+                bd2PatchedRows = bd2Res.patchedRows;
+                for (BackupEntry be : nextManifest.entries) {
+                    newRelPaths.add(be.relPath);
+                }
+            }
 
             int total = stagedFiles.size();
             int inPlaceCatalogCount = 0;
@@ -731,12 +732,26 @@ public class ShellBridgeServer {
                 }
             }
 
+            for (BackupEntry oldEntry : prevManifest.entries) {
+                if (!nextManifest.byPath.containsKey(oldEntry.relPath)) {
+                    File oldTarget = new File(filesDir, oldEntry.relPath);
+                    File oldBackup = new File(origDir, oldEntry.relPath);
+                    if (oldEntry.hadOriginal && oldBackup.isFile()) {
+                        copyFileAtomically(oldBackup, oldTarget);
+                        oldBackup.delete();
+                    } else if (!oldEntry.hadOriginal && oldTarget.isFile()) {
+                        oldTarget.delete();
+                    }
+                }
+            }
+
             if (listener != null) {
                 listener.onProgress(98, "جارٍ حفظ سجل النسخ الاحتياطي والتثبيت...");
             }
             writeTextAtomically(manifestFile, serializeManifest(nextManifest));
 
-            return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + total + "|in_place=" + inPlaceCatalogCount;
+            return "OK|INSTALLED|" + nextManifest.patchVersion + "|" + nextManifest.entries.size()
+                    + "|in_place=" + inPlaceCatalogCount + "|bd2_rows=" + bd2PatchedRows;
         } catch (Throwable t) {
             return "ERR|" + t.getClass().getSimpleName() + ": " + t.getMessage();
         }
