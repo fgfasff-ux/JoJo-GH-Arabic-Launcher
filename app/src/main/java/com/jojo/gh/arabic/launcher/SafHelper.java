@@ -37,10 +37,29 @@ public final class SafHelper {
     private SafHelper() {
     }
 
+    private static List<String> getAllSupportedPackages() {
+        List<String> pkgs = new ArrayList<>();
+        for (String p : LauncherConfig.GAME_PACKAGES) {
+            if (p != null && !p.trim().isEmpty() && !pkgs.contains(p.trim())) {
+                pkgs.add(p.trim());
+            }
+        }
+        try {
+            for (GameProfile gp : GameProfileRegistry.getAllProfiles()) {
+                if (gp != null && gp.packageName != null && !gp.packageName.trim().isEmpty()
+                        && !pkgs.contains(gp.packageName.trim())) {
+                    pkgs.add(gp.packageName.trim());
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return pkgs;
+    }
+
     public static String resolveInstalledGamePkg(Context context) {
         if (context != null) {
             PackageManager pm = context.getPackageManager();
-            for (String pkg : LauncherConfig.GAME_PACKAGES) {
+            for (String pkg : getAllSupportedPackages()) {
                 try {
                     pm.getPackageInfo(pkg, 0);
                     return pkg;
@@ -63,7 +82,7 @@ public final class SafHelper {
         if ("Android".equals(rel) || "Android/data".equals(rel)) {
             return true;
         }
-        for (String pkg : LauncherConfig.GAME_PACKAGES) {
+        for (String pkg : getAllSupportedPackages()) {
             String base = "Android/data/" + pkg;
             if (base.equals(rel) || rel.startsWith(base + "/")) {
                 return true;
@@ -73,28 +92,44 @@ public final class SafHelper {
     }
 
     public static String resolveFilesDocId(Context context, Uri treeUri) {
+        return resolveFilesDocId(context, treeUri, null);
+    }
+
+    public static String resolveFilesDocId(Context context, Uri treeUri, String targetPackage) {
         try {
             String treeId = DocumentsContract.getTreeDocumentId(treeUri);
             int colon = treeId != null ? treeId.indexOf(':') : -1;
             String prefix = colon > 0 ? treeId.substring(0, colon + 1) : "primary:";
             String rel = (colon > 0 && colon + 1 < treeId.length()) ? treeId.substring(colon + 1) : "";
 
-            for (String pkg : LauncherConfig.GAME_PACKAGES) {
+            String explicit = (targetPackage != null && !targetPackage.trim().isEmpty()) ? targetPackage.trim() : null;
+            if (explicit != null) {
+                String expBase = "Android/data/" + explicit;
+                if (expBase.equals(rel) || rel.startsWith(expBase + "/")
+                        || "Android".equals(rel) || "Android/data".equals(rel)) {
+                    return prefix + expBase + "/files";
+                }
+            }
+
+            for (String pkg : getAllSupportedPackages()) {
                 String base = "Android/data/" + pkg;
                 if (base.equals(rel) || rel.startsWith(base + "/")) {
                     return prefix + base + "/files";
                 }
             }
-            for (String pkg : LauncherConfig.GAME_PACKAGES) {
+            for (String pkg : getAllSupportedPackages()) {
                 String candidate = prefix + "Android/data/" + pkg + "/files";
                 if (docExists(context, treeUri, candidate + "/" + LauncherConfig.DEFAULT_FORCE_SUBDIR)
-                        || docExists(context, treeUri, candidate + "/" + LauncherConfig.DEFAULT_CONFIG_SUBDIR)) {
+                        || docExists(context, treeUri, candidate + "/" + LauncherConfig.DEFAULT_CONFIG_SUBDIR)
+                        || docExists(context, treeUri, candidate + "/Data")
+                        || docExists(context, treeUri, candidate + "/UnityCache")) {
                     return candidate;
                 }
             }
-            return prefix + "Android/data/" + resolveInstalledGamePkg(context) + "/files";
+            return prefix + "Android/data/" + (explicit != null ? explicit : resolveInstalledGamePkg(context)) + "/files";
         } catch (Throwable t) {
-            return "primary:Android/data/" + LauncherConfig.GAME_PACKAGE + "/files";
+            String fallbackPkg = (targetPackage != null && !targetPackage.trim().isEmpty()) ? targetPackage.trim() : LauncherConfig.GAME_PACKAGE;
+            return "primary:Android/data/" + fallbackPkg + "/files";
         }
     }
 
@@ -116,14 +151,36 @@ public final class SafHelper {
     }
 
     public static Uri findGrantedTreeUri(Context context) {
+        return findGrantedTreeUri(context, null);
+    }
+
+    public static Uri findGrantedTreeUri(Context context, String targetPackage) {
         try {
+            String explicit = (targetPackage != null && !targetPackage.trim().isEmpty()) ? targetPackage.trim() : null;
+            Uri genericMatch = null;
             for (UriPermission perm : context.getContentResolver().getPersistedUriPermissions()) {
                 if (perm.isReadPermission() && perm.isWritePermission()) {
                     Uri uri = perm.getUri();
-                    if (isValidGameTreeDocId(DocumentsContract.getTreeDocumentId(uri))) {
+                    String docId = DocumentsContract.getTreeDocumentId(uri);
+                    if (!isValidGameTreeDocId(docId)) {
+                        continue;
+                    }
+                    if (explicit == null) {
                         return uri;
                     }
+                    int colon = docId.indexOf(':');
+                    String rel = (colon > 0 && colon + 1 < docId.length()) ? docId.substring(colon + 1) : "";
+                    String expBase = "Android/data/" + explicit;
+                    if (expBase.equals(rel) || rel.startsWith(expBase + "/")) {
+                        return uri;
+                    }
+                    if ("Android".equals(rel) || "Android/data".equals(rel)) {
+                        genericMatch = uri;
+                    }
                 }
+            }
+            if (genericMatch != null) {
+                return genericMatch;
             }
         } catch (Throwable ignored) {
         }
@@ -178,6 +235,10 @@ public final class SafHelper {
     }
 
     public static Intent buildOpenTreeIntent(Context context) {
+        return buildOpenTreeIntent(context, null);
+    }
+
+    public static Intent buildOpenTreeIntent(Context context, String targetPackage) {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -188,7 +249,10 @@ public final class SafHelper {
         intent.putExtra("android.content.extra.SHOW_ADVANCED", true);
         intent.putExtra("android.provider.extra.SHOW_ADVANCED", true);
         if (Build.VERSION.SDK_INT >= 26) {
-            String initialDocId = "primary:Android/data/" + resolveInstalledGamePkg(context);
+            String pkg = (targetPackage != null && !targetPackage.trim().isEmpty())
+                    ? targetPackage.trim()
+                    : resolveInstalledGamePkg(context);
+            String initialDocId = "primary:Android/data/" + pkg;
             intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI,
                     DocumentsContract.buildDocumentUri(AUTHORITY, initialDocId));
         }
@@ -267,19 +331,20 @@ public final class SafHelper {
     }
 
     private static String resolveTargetRelativePathSaf(String normSubpath, String relInStage) {
+        String cleanRel = ShellBridgeServer.normalizeStageRelativePath(relInStage);
         if (!normSubpath.isEmpty()) {
-            return normSubpath + "/" + relInStage;
+            return normSubpath + "/" + cleanRel;
         }
-        if (!relInStage.contains("/")) {
-            String low = relInStage.toLowerCase(Locale.US);
+        if (!cleanRel.contains("/")) {
+            String low = cleanRel.toLowerCase(Locale.US);
             if (low.endsWith(".bbytes") || low.endsWith(".lbytes") || low.endsWith(".dbytes") || low.endsWith(".bytes")) {
-                return LauncherConfig.DEFAULT_FORCE_SUBDIR + "/" + relInStage;
+                return LauncherConfig.DEFAULT_FORCE_SUBDIR + "/" + cleanRel;
             }
             if (low.endsWith(".conf") || "important.json".equals(low)) {
-                return LauncherConfig.DEFAULT_CONFIG_SUBDIR + "/" + relInStage;
+                return LauncherConfig.DEFAULT_CONFIG_SUBDIR + "/" + cleanRel;
             }
         }
-        return relInStage;
+        return cleanRel;
     }
 
     public static String checkDataSafety(
@@ -289,13 +354,40 @@ public final class SafHelper {
             long expectedLangSize,
             String expectedLangMd5
     ) {
+        return checkDataSafety(context, treeUri, expectedForceConfSize, expectedLangSize, expectedLangMd5, null);
+    }
+
+    public static String checkDataSafety(
+            Context context,
+            Uri treeUri,
+            long expectedForceConfSize,
+            long expectedLangSize,
+            String expectedLangMd5,
+            String targetPackage
+    ) {
         try {
-            String filesDocId = resolveFilesDocId(context, treeUri);
+            String filesDocId = resolveFilesDocId(context, treeUri, targetPackage);
             if (!isGameInitializedSaf(context, treeUri, filesDocId)) {
                 return "OK|NOT_READY|false|0||0";
             }
-            String manifestDocId = filesDocId + "/" + LauncherConfig.BACKUP_DIR_NAME + "/" + LauncherConfig.BACKUP_MANIFEST_FILE;
+            String backupName = ShellBridgeServer.resolveBackupDirName(targetPackage);
+            String manifestDocId = filesDocId + "/" + backupName + "/" + LauncherConfig.BACKUP_MANIFEST_FILE;
             boolean hasBackup = docExists(context, treeUri, manifestDocId);
+
+            if (!ShellBridgeServer.isJoJoPackage(targetPackage)) {
+                if (hasBackup) {
+                    ShellBridgeServer.BackupManifest m =
+                            ShellBridgeServer.parseManifest(readTextFromSaf(context, treeUri, manifestDocId));
+                    for (ShellBridgeServer.BackupEntry entry : m.entries) {
+                        String targetDocId = filesDocId + "/" + entry.relPath;
+                        if (!docExists(context, treeUri, targetDocId) || docLength(context, treeUri, targetDocId) != entry.patchedSize) {
+                            return "OTA_CHANGED|HOTUPDATE_OVERWROTE_DATA|true|تغيّر ملف " + entry.relPath + " بعد تحديث داخلي (OTA)";
+                        }
+                    }
+                    return "OK|SAFE|true|0||0";
+                }
+                return "OK|SAFE|false|0||0";
+            }
 
             String langDocId = filesDocId + "/" + LauncherConfig.TARGET_LANG_REL_PATH;
             String confDocId = filesDocId + "/" + LauncherConfig.TARGET_INDEX_REL_PATH;
@@ -326,12 +418,17 @@ public final class SafHelper {
     }
 
     public static String getStatus(Context context, Uri treeUri) {
+        return getStatus(context, treeUri, null);
+    }
+
+    public static String getStatus(Context context, Uri treeUri, String targetPackage) {
         try {
-            String filesDocId = resolveFilesDocId(context, treeUri);
+            String filesDocId = resolveFilesDocId(context, treeUri, targetPackage);
             if (!isGameInitializedSaf(context, treeUri, filesDocId)) {
                 return "OK|false|false||0";
             }
-            String manifestDocId = filesDocId + "/" + LauncherConfig.BACKUP_DIR_NAME + "/" + LauncherConfig.BACKUP_MANIFEST_FILE;
+            String backupName = ShellBridgeServer.resolveBackupDirName(targetPackage);
+            String manifestDocId = filesDocId + "/" + backupName + "/" + LauncherConfig.BACKUP_MANIFEST_FILE;
             if (!docExists(context, treeUri, manifestDocId)) {
                 return "OK|true|false||0";
             }
@@ -363,11 +460,23 @@ public final class SafHelper {
             String targetSubpath,
             ShellBridgeServer.ProgressListener listener
     ) {
+        return applyInstall(context, treeUri, stagingDir, patchVersion, targetSubpath, null, listener);
+    }
+
+    public static String applyInstall(
+            Context context,
+            Uri treeUri,
+            File stagingDir,
+            String patchVersion,
+            String targetSubpath,
+            String targetPackage,
+            ShellBridgeServer.ProgressListener listener
+    ) {
         try {
             if (listener != null) {
                 listener.onProgress(60, "جارٍ فحص مجلد اللعبة عبر SAF...");
             }
-            String filesDocId = resolveFilesDocId(context, treeUri);
+            String filesDocId = resolveFilesDocId(context, treeUri, targetPackage);
             if (!isGameInitializedSaf(context, treeUri, filesDocId)) {
                 return "ERR|NEEDS_FIRST_LAUNCH";
             }
@@ -375,17 +484,31 @@ public final class SafHelper {
                 return "ERR|MISSING_STAGE_DIR";
             }
 
-            List<File> stagedFiles = new ArrayList<>();
-            ShellBridgeServer.collectFilesRecursively(stagingDir, stagedFiles);
+            List<File> rawStagedFiles = new ArrayList<>();
+            ShellBridgeServer.collectFilesRecursively(stagingDir, rawStagedFiles);
+            if (rawStagedFiles.isEmpty()) {
+                return "ERR|EMPTY_STAGE";
+            }
+            Collections.sort(rawStagedFiles, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
+
+            List<File> stagedFiles = new ArrayList<>(rawStagedFiles.size());
+            for (File f : rawStagedFiles) {
+                String nm = f.getName();
+                if ("addressables_patch_manifest.json".equalsIgnoreCase(nm)
+                        || "extra_textures_manifest.json".equalsIgnoreCase(nm)
+                        || "catalog_patch.json".equalsIgnoreCase(nm)) {
+                    continue;
+                }
+                stagedFiles.add(f);
+            }
             if (stagedFiles.isEmpty()) {
                 return "ERR|EMPTY_STAGE";
             }
-            Collections.sort(stagedFiles, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
 
             String normSubpath = LauncherConfig.normalizeSubpath(targetSubpath);
             String stageBase = stagingDir.getCanonicalPath() + File.separator;
 
-            String backupDirId = filesDocId + "/" + LauncherConfig.BACKUP_DIR_NAME;
+            String backupDirId = filesDocId + "/" + ShellBridgeServer.resolveBackupDirName(targetPackage);
             String origDirId = backupDirId + "/orig";
             String manifestDocId = backupDirId + "/" + LauncherConfig.BACKUP_MANIFEST_FILE;
             ensureDirExists(context, treeUri, origDirId);
@@ -501,9 +624,18 @@ public final class SafHelper {
             Uri treeUri,
             ShellBridgeServer.ProgressListener listener
     ) {
+        return applyRestore(context, treeUri, null, listener);
+    }
+
+    public static String applyRestore(
+            Context context,
+            Uri treeUri,
+            String targetPackage,
+            ShellBridgeServer.ProgressListener listener
+    ) {
         try {
-            String filesDocId = resolveFilesDocId(context, treeUri);
-            String backupDirId = filesDocId + "/" + LauncherConfig.BACKUP_DIR_NAME;
+            String filesDocId = resolveFilesDocId(context, treeUri, targetPackage);
+            String backupDirId = filesDocId + "/" + ShellBridgeServer.resolveBackupDirName(targetPackage);
             if (!docExists(context, treeUri, backupDirId)) {
                 return "OK|RESTORED|0";
             }

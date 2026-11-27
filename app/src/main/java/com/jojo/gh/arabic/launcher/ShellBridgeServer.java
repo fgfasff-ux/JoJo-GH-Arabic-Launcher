@@ -128,11 +128,11 @@ public class ShellBridgeServer {
         }
     }
 
-    private static boolean isJoJoPackage(String pkg) {
+    static boolean isJoJoPackage(String pkg) {
         return pkg == null || pkg.trim().isEmpty() || LauncherConfig.GAME_PACKAGE.equals(pkg.trim());
     }
 
-    private static String resolveBackupDirName(String targetPackage) {
+    static String resolveBackupDirName(String targetPackage) {
         if (targetPackage != null && "com.bandainamcoent.dblegends_ww".equals(targetPackage.trim())) {
             return ".dbl_arabic_backup";
         }
@@ -238,12 +238,16 @@ public class ShellBridgeServer {
     }
 
     public static boolean canDirectReadWriteGameDir(File hintDir) {
+        return canDirectReadWriteGameDir(hintDir, null);
+    }
+
+    public static boolean canDirectReadWriteGameDir(File hintDir, String targetPackage) {
         try {
             int myUid = Process.myUid();
             if (Build.VERSION.SDK_INT >= 30 && (myUid % 100000) >= 10000) {
                 return false;
             }
-            File filesDir = resolveGameFilesDir(hintDir);
+            File filesDir = resolveGameFilesDir(hintDir, targetPackage);
             if (!filesDir.isDirectory()) {
                 return false;
             }
@@ -355,7 +359,7 @@ public class ShellBridgeServer {
      * - .bbytes / .bytes / .dbytes -> force/
      * - force.conf / local.conf / important.json -> config/
      */
-    private static String resolveTargetRelativePath(String normSubpath, String relInStage) {
+    static String normalizeStageRelativePath(String relInStage) {
         String cleanRel = relInStage != null ? relInStage.replace('\\', '/') : "";
         while (cleanRel.startsWith("/")) {
             cleanRel = cleanRel.substring(1);
@@ -369,6 +373,11 @@ public class ShellBridgeServer {
         } else if (lowRel.startsWith("textures/unitycache/")) {
             cleanRel = cleanRel.substring("textures/".length());
         }
+        return cleanRel;
+    }
+
+    private static String resolveTargetRelativePath(String normSubpath, String relInStage) {
+        String cleanRel = normalizeStageRelativePath(relInStage);
         if (!normSubpath.isEmpty()) {
             return normSubpath + "/" + cleanRel;
         }

@@ -3712,9 +3712,9 @@ public class MainActivity extends Activity {
             } else if (mode == AccessMode.DIRECT_FS) {
                 result = ShellBridgeServer.applyInstall(effectiveStage, patchVer, normSubpath, activePkg, null);
             } else {
-                Uri tree = SafHelper.findGrantedTreeUri(this);
+                Uri tree = SafHelper.findGrantedTreeUri(this, activePkg);
                 result = tree != null
-                        ? SafHelper.applyInstall(this, tree, effectiveStage, patchVer, normSubpath, null)
+                        ? SafHelper.applyInstall(this, tree, effectiveStage, patchVer, normSubpath, activePkg, null)
                         : "ERR|NO_SAF";
             }
             if (result != null && result.startsWith("OK|")) {
@@ -3807,9 +3807,9 @@ public class MainActivity extends Activity {
             } else if (mode == AccessMode.DIRECT_FS) {
                 resp = ShellBridgeServer.checkDataSafety(getHintDir(), expForceConf, expLangSize, expLangMd5, activePkg);
             } else if (mode == AccessMode.SAF_GRANTED) {
-                Uri tree = SafHelper.findGrantedTreeUri(this);
+                Uri tree = SafHelper.findGrantedTreeUri(this, activePkg);
                 if (tree != null) {
-                    resp = SafHelper.checkDataSafety(this, tree, expForceConf, expLangSize, expLangMd5);
+                    resp = SafHelper.checkDataSafety(this, tree, expForceConf, expLangSize, expLangMd5, activePkg);
                 }
             }
 
@@ -3875,11 +3875,11 @@ public class MainActivity extends Activity {
         } else if (mode == AccessMode.DIRECT_FS) {
             return ShellBridgeServer.applyRestore(getHintDir(), activePkg, listener);
         } else {
-            Uri tree = SafHelper.findGrantedTreeUri(this);
+            Uri tree = SafHelper.findGrantedTreeUri(this, activePkg);
             if (tree == null) {
                 return "ERR|NO_SAF_TREE";
             }
-            return SafHelper.applyRestore(this, tree, listener);
+            return SafHelper.applyRestore(this, tree, activePkg, listener);
         }
     }
 
@@ -3957,10 +3957,10 @@ public class MainActivity extends Activity {
             }
         }
 
-        if (ShellBridgeServer.canDirectReadWriteGameDir(getHintDir())) {
+        if (ShellBridgeServer.canDirectReadWriteGameDir(getHintDir(), activeProfile != null ? activeProfile.packageName : null)) {
             return AccessMode.DIRECT_FS;
         }
-        if (SafHelper.findGrantedTreeUri(this) != null) {
+        if (SafHelper.findGrantedTreeUri(this, activeProfile != null ? activeProfile.packageName : null) != null) {
             return AccessMode.SAF_GRANTED;
         }
 
@@ -4097,9 +4097,9 @@ public class MainActivity extends Activity {
             } else if (mode == AccessMode.DIRECT_FS) {
                 statusResp = ShellBridgeServer.getStatus(getHintDir(), activePkg);
             } else if (mode == AccessMode.SAF_GRANTED) {
-                Uri tree = SafHelper.findGrantedTreeUri(this);
+                Uri tree = SafHelper.findGrantedTreeUri(this, activePkg);
                 if (tree != null) {
-                    statusResp = SafHelper.getStatus(this, tree);
+                    statusResp = SafHelper.getStatus(this, tree, activePkg);
                 }
             }
 
@@ -4365,7 +4365,8 @@ public class MainActivity extends Activity {
 
     private void openGameFolderAutoDirect() {
         try {
-            startActivityForResult(SafHelper.buildOpenTreeIntent(this), REQ_SAF_TREE);
+            String activePkg = activeProfile != null ? activeProfile.packageName : null;
+            startActivityForResult(SafHelper.buildOpenTreeIntent(this, activePkg), REQ_SAF_TREE);
             Toast.makeText(this, "اضغط «استخدام هذا المجلد» بالأسفل ثم «السماح».", Toast.LENGTH_LONG).show();
         } catch (Throwable t) {
             showAccessWizardDialog(false);
@@ -4466,7 +4467,7 @@ public class MainActivity extends Activity {
                                 treeUri,
                                 Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                         );
-                        Toast.makeText(this, "تم ربط مجلد JoJo: Golden Hymn بنجاح ✓", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, "تم ربط مجلد " + (activeProfile != null ? activeProfile.title : "اللعبة") + " بنجاح ✓", Toast.LENGTH_SHORT).show();
                     } catch (Throwable ignored) {
                     }
                 } else {
@@ -4513,9 +4514,20 @@ public class MainActivity extends Activity {
         worker.execute(() -> {
             try {
                 boolean useBeta = activeProfile.comingSoon && BetaModeManager.isBetaEnabled(this);
-                PatchManifest manifest = useBeta
-                        ? PatchDownloader.fetchBetaManifest(activeProfile)
-                        : PatchDownloader.fetchManifestForProfile(activeProfile);
+                PatchManifest manifest;
+                if (useBeta) {
+                    manifest = PatchDownloader.fetchBetaManifest(activeProfile);
+                } else {
+                    try {
+                        manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
+                    } catch (Throwable pubErr) {
+                        if (BetaModeManager.isBetaEnabled(this)) {
+                            manifest = PatchDownloader.fetchBetaManifest(activeProfile);
+                        } else {
+                            throw pubErr;
+                        }
+                    }
+                }
                 manifest.saveToCache(this, activeProfile.id);
                 latestRemoteManifest = manifest;
                 syncDynamicMediaForManifest(activeProfile, manifest);
@@ -4591,9 +4603,20 @@ public class MainActivity extends Activity {
                 stageDir.mkdirs();
 
                 boolean useBeta = activeProfile.comingSoon && BetaModeManager.isBetaEnabled(this);
-                PatchManifest manifest = useBeta
-                        ? PatchDownloader.fetchBetaManifest(activeProfile)
-                        : PatchDownloader.fetchManifestForProfile(activeProfile);
+                PatchManifest manifest;
+                if (useBeta) {
+                    manifest = PatchDownloader.fetchBetaManifest(activeProfile);
+                } else {
+                    try {
+                        manifest = PatchDownloader.fetchManifestForProfile(activeProfile);
+                    } catch (Throwable pubErr) {
+                        if (BetaModeManager.isBetaEnabled(this)) {
+                            manifest = PatchDownloader.fetchBetaManifest(activeProfile);
+                        } else {
+                            throw pubErr;
+                        }
+                    }
+                }
                 manifest.saveToCache(this, activeProfile.id);
                 latestRemoteManifest = manifest;
                 syncDynamicMediaForManifest(activeProfile, manifest);
@@ -4830,17 +4853,17 @@ public class MainActivity extends Activity {
         } else if (mode == AccessMode.DIRECT_FS) {
             result = ShellBridgeServer.applyInstall(stageDir, patchVersion, normSubpath, activePkg, listener);
             if (result == null || (!result.startsWith("OK|") && !result.contains("NEEDS_FIRST_LAUNCH"))) {
-                Uri tree = SafHelper.findGrantedTreeUri(this);
+                Uri tree = SafHelper.findGrantedTreeUri(this, activePkg);
                 if (tree != null) {
-                    result = SafHelper.applyInstall(this, tree, stageDir, patchVersion, normSubpath, listener);
+                    result = SafHelper.applyInstall(this, tree, stageDir, patchVersion, normSubpath, activePkg, listener);
                 }
             }
         } else {
-            Uri tree = SafHelper.findGrantedTreeUri(this);
+            Uri tree = SafHelper.findGrantedTreeUri(this, activePkg);
             if (tree == null) {
                 throw new IllegalStateException("صلاحية SAF غير متوفرة");
             }
-            result = SafHelper.applyInstall(this, tree, stageDir, patchVersion, normSubpath, listener);
+            result = SafHelper.applyInstall(this, tree, stageDir, patchVersion, normSubpath, activePkg, listener);
         }
 
         if (result != null && result.contains("NEEDS_FIRST_LAUNCH")) {
