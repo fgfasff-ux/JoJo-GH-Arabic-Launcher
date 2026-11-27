@@ -1240,9 +1240,14 @@ public class MainActivity extends Activity {
         worker.execute(() -> {
             try {
                 // جلب ملف manifest الحي من GitHub (وعند فتح لعبة قيد الاختبار في Beta Mode، يُجلب manifest_beta.json مباشرة!)
-                PatchManifest liveManifest;
+                PatchManifest liveManifest = null;
                 if (BetaModeManager.isBetaEnabled(this) && profile.comingSoon) {
-                    liveManifest = PatchDownloader.fetchBetaManifest(profile);
+                    try {
+                        liveManifest = PatchDownloader.fetchBetaManifest(profile);
+                    } catch (Throwable betaErr) {
+                        // في وضع اختبار المطوّر (Beta Mode) للعبة جديدة لم يُنشر لها أول manifest_beta بعد، نسمح بالدخول للتجربة اليدوية
+                        liveManifest = null;
+                    }
                 } else {
                     try {
                         liveManifest = PatchDownloader.fetchManifestForProfile(profile);
@@ -1254,18 +1259,20 @@ public class MainActivity extends Activity {
                         }
                     }
                 }
-                liveManifest.saveToCache(this, profile.id);
+                if (liveManifest != null) {
+                    liveManifest.saveToCache(this, profile.id);
+                }
                 latestRemoteManifest = liveManifest;
 
                 // مزامنة الشعار والبانر بالتخزين الذكي بالبصمة (لا يُعاد التحميل إلا إذا تغيّرت البصمة!)
-                if (!liveManifest.iconUrl.isEmpty()) {
+                if (liveManifest != null && !liveManifest.iconUrl.isEmpty()) {
                     GameIconCache.syncIconSync(this, profile.id, liveManifest.iconUrl, liveManifest.iconHash);
                 }
-                String bannerUrl = liveManifest.getEffectiveBannerImageUrl();
+                String bannerUrl = liveManifest != null ? liveManifest.getEffectiveBannerImageUrl() : "";
                 if (!bannerUrl.isEmpty()) {
                     GameIconCache.syncBannerSync(this, profile.id, bannerUrl, liveManifest.getEffectiveBannerImageHash());
                 }
-                String videoUrl = liveManifest.getEffectiveHeroVideoUrl();
+                String videoUrl = liveManifest != null ? liveManifest.getEffectiveHeroVideoUrl() : "";
                 if (!videoUrl.isEmpty()) {
                     File cachedVid = GameIconCache.loadCachedHeroVideoFile(this, profile.id);
                     activeRemoteHeroVideoFile = cachedVid;

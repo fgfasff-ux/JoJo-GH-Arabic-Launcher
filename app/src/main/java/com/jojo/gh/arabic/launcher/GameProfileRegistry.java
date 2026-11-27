@@ -101,6 +101,45 @@ public final class GameProfileRegistry {
                     "48dccefe894d7951"
             ));
 
+            // 3) BrownDust II — جاهز للاختبار السري (Beta Mode) مع فك تشفير قواعد Data/t وحزم UnityCache ومطابقة الحجم بالبايت
+            list.add(new GameProfile(
+                    "browndust2",
+                    "BrownDust II",
+                    "براون داست 2",
+                    "تحديث تعريب براون داست 2 — القوائم والمهارات والقصص والواجهات بالعربية الفصحى",
+                    "com.neowizgames.game.browndust2",
+                    Color.parseColor("#DCB560"),
+                    Color.parseColor("#1D4E68"),
+                    R.drawable.ic_bd2_game,
+                    R.drawable.bg_bd2_banner,
+                    0,
+                    SecretVault.bd2GithubRepo(),
+                    SecretVault.bd2ManifestUrl(),
+                    SecretVault.bd2BetaManifestUrl(),
+                    PatchStrategy.ASSET_REPLACE,
+                    "2.39.10",
+                    239010L,
+                    "v0.1.0-beta.1",
+                    true,
+                    "198,185 نصاً إنجليزياً مكتشفاً (88 قاعدة Data/t + واجهات UnityCache)",
+                    "القوائم والمهارات والمهام والقصص والواجهات الرسومية",
+                    "متوافق مع الإصدار 2.39.10 (مطابقة الحجم بالبايت 100%)",
+                    "🛡 نسخة احتياطية تلقائية + حفظ الطابع الزمني ✓",
+                    "NEOWIZ",
+                    "3.7 ★",
+                    "+1,000,000",
+                    "لعبة تقمص أدوار تكتيكية برسومات ثنائية الأبعاد فائقة الجودة — تعريب عربي فصيح مع فك وإعادة تشفير قواعد Data/t ومطابقة الحجم بالبايت.",
+                    198185,
+                    Arrays.asList(
+                            "https://play-lh.googleusercontent.com/7lCh_1239q1DCsPUA0YKqusSvL325zcszv-J39phkExq7oJCYTGSXQyk5H3XEfCJbjyetBXzfhS_bxgQHEAkFw=w1280",
+                            "https://play-lh.googleusercontent.com/icPQtq_YU75-LXWyLzrag3FEkU_cfUf5tDW0cTVaXrGp1ZP89GV3iFGiDCFkQHCkstOZrfwonZLy3Pa23YVLj44=w1280",
+                            "https://play-lh.googleusercontent.com/KXEQHmssVkYEUaDDIm3JJ5JgXvZceMsNTtjEymtaEQYisJ5wydgwSr8UiJntokgPh-aMghOPxVdFZapWKuLRRg=w1280",
+                            "https://play-lh.googleusercontent.com/60bxXyxq3JFvLfq4_UsQwbbi6M-6MZqQ2ahBuwzmYJz4VG8BEbs53MVk7r1dqCAJ0A-5wfCtUBtLkW6rhMiC8A=w1280",
+                            "https://play-lh.googleusercontent.com/rV20oa51fsgt1D7iLqI0nByWq2eJbkKSkeoDLG4bKF38WW4xrP22x27Lbbu5Wp2o3lkseMjqcaHjMXQB5fin7w=w1280"
+                    ),
+                    "ccb7e1c6d1e2369b"
+            ));
+
             cachedProfiles = Collections.unmodifiableList(list);
         }
         return cachedProfiles;

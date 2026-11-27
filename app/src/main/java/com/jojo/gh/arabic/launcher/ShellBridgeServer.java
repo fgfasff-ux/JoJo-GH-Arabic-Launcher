@@ -136,6 +136,9 @@ public class ShellBridgeServer {
         if (targetPackage != null && "com.bandainamcoent.dblegends_ww".equals(targetPackage.trim())) {
             return ".dbl_arabic_backup";
         }
+        if (targetPackage != null && "com.neowizgames.game.browndust2".equals(targetPackage.trim())) {
+            return ".bd2_arabic_backup";
+        }
         if (isJoJoPackage(targetPackage)) {
             return LauncherConfig.BACKUP_DIR_NAME;
         }
@@ -353,19 +356,32 @@ public class ShellBridgeServer {
      * - force.conf / local.conf / important.json -> config/
      */
     private static String resolveTargetRelativePath(String normSubpath, String relInStage) {
-        if (!normSubpath.isEmpty()) {
-            return normSubpath + "/" + relInStage;
+        String cleanRel = relInStage != null ? relInStage.replace('\\', '/') : "";
+        while (cleanRel.startsWith("/")) {
+            cleanRel = cleanRel.substring(1);
         }
-        if (!relInStage.contains("/")) {
-            String low = relInStage.toLowerCase(Locale.US);
+        // تطبيع مسارات حزم BrownDust II (مثل android_data/files/Data/t/... أو textures/UnityCache/...)
+        String lowRel = cleanRel.toLowerCase(Locale.US);
+        if (lowRel.startsWith("android_data/files/")) {
+            cleanRel = cleanRel.substring("android_data/files/".length());
+        } else if (lowRel.startsWith("files/data/") || lowRel.startsWith("files/unitycache/")) {
+            cleanRel = cleanRel.substring("files/".length());
+        } else if (lowRel.startsWith("textures/unitycache/")) {
+            cleanRel = cleanRel.substring("textures/".length());
+        }
+        if (!normSubpath.isEmpty()) {
+            return normSubpath + "/" + cleanRel;
+        }
+        if (!cleanRel.contains("/")) {
+            String low = cleanRel.toLowerCase(Locale.US);
             if (low.endsWith(".bbytes") || low.endsWith(".lbytes") || low.endsWith(".dbytes") || low.endsWith(".bytes")) {
-                return LauncherConfig.DEFAULT_FORCE_SUBDIR + "/" + relInStage;
+                return LauncherConfig.DEFAULT_FORCE_SUBDIR + "/" + cleanRel;
             }
             if (low.endsWith(".conf") || "important.json".equals(low)) {
-                return LauncherConfig.DEFAULT_CONFIG_SUBDIR + "/" + relInStage;
+                return LauncherConfig.DEFAULT_CONFIG_SUBDIR + "/" + cleanRel;
             }
         }
-        return relInStage;
+        return cleanRel;
     }
 
     /**
@@ -517,12 +533,15 @@ public class ShellBridgeServer {
             }
             Collections.sort(rawStagedFiles, (a, b) -> a.getAbsolutePath().compareTo(b.getAbsolutePath()));
 
-            // فصل ملف بيانات الكتالوج الإضافي (catalog_patch.json) عن ملفات اللعبة الفعلية
+            // فصل ملفات الفهرسة الوصفية (catalog_patch.json / addressables_patch_manifest.json) عن ملفات اللعبة الفعلية
             File catalogPatchJsonFile = null;
             List<File> stagedFiles = new ArrayList<>(rawStagedFiles.size());
             for (File f : rawStagedFiles) {
                 if ("catalog_patch.json".equalsIgnoreCase(f.getName())) {
                     catalogPatchJsonFile = f;
+                } else if ("addressables_patch_manifest.json".equalsIgnoreCase(f.getName())
+                        || "extra_textures_manifest.json".equalsIgnoreCase(f.getName())) {
+                    continue;
                 } else {
                     stagedFiles.add(f);
                 }
@@ -682,7 +701,14 @@ public class ShellBridgeServer {
                 }
 
                 if (!appliedInPlace) {
+                    long origMtime = targetFile.isFile() ? targetFile.lastModified() : 0L;
                     copyFileAtomically(src, targetFile);
+                    if (origMtime > 0L) {
+                        try {
+                            targetFile.setLastModified(origMtime);
+                        } catch (Throwable ignored) {
+                        }
+                    }
                 }
 
                 String finalSha256 = sha256Lower(targetFile);

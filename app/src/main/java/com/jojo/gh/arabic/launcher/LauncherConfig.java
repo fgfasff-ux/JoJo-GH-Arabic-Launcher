@@ -14,7 +14,7 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "3.5.1";
+    public static final String APP_VERSION = "3.6.0";
     public static final String BRAND_TITLE = "تعريب R.D.AV";
     public static final String HUB_TITLE = "R.D.AV Multi-Game Hub";
     public static final String HUB_SUBTITLE = "منصة تعريب الألعاب العربية الفصحى • متعدد الألعاب";
@@ -62,13 +62,16 @@ public final class LauncherConfig {
     public static final String[] FIRST_LAUNCH_ANY_OF_PATHS = {
             "force",
             "ab",
-            "config"
+            "config",
+            "Data",
+            "UnityCache"
     };
 
     public static final String[] KNOWN_GAME_SUBDIRS = {
             "force",
             "ab",
             "config",
+            "Data",
             "il2cpp",
             "Unity",
             "UnityCache"
