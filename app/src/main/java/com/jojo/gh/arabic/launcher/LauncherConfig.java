@@ -14,7 +14,7 @@ public final class LauncherConfig {
     // =========================================================================
     // 1) معلومات التطبيق وهويته
     // =========================================================================
-    public static final String APP_VERSION = "3.7.1";
+    public static final String APP_VERSION = "3.8.0";
     public static final String BRAND_TITLE = "تعريب R.D.AV";
     public static final String HUB_TITLE = "R.D.AV Multi-Game Hub";
     public static final String HUB_SUBTITLE = "منصة تعريب الألعاب العربية الفصحى • متعدد الألعاب";
@@ -64,7 +64,9 @@ public final class LauncherConfig {
             "ab",
             "config",
             "Data",
-            "UnityCache"
+            "UnityCache",
+            "HT",
+            "UnrealGame"
     };
 
     public static final String[] KNOWN_GAME_SUBDIRS = {
@@ -74,7 +76,9 @@ public final class LauncherConfig {
             "Data",
             "il2cpp",
             "Unity",
-            "UnityCache"
+            "UnityCache",
+            "HT",
+            "UnrealGame"
     };
 
     public static final String BACKUP_DIR_NAME = ".jojo_gh_arabic_backup";

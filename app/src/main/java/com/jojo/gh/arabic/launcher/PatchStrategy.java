@@ -26,6 +26,17 @@ public enum PatchStrategy {
             "ASSET_REPLACE",
             "Unity Asset Replace + Backup",
             "نسخ الملفات المعرّبة إلى files/assets/ أو il2cpp مع نسخة احتياطية تلقائية"
+    ),
+
+    /**
+     * ألعاب Unreal Engine 5 بحزم التراكب المشفّرة (_99_P.pak مثل NTE: Neverness to Everness):
+     * حقن حزمة التراكب (pakchunk0-Android_ASTC_99_P.pak) داخل HT/Content/PatchPaks/
+     * دون تعديل الملفات الأصلية مع استعادة فورية بنقرة واحدة.
+     */
+    UE5_PAK_OVERLAY(
+            "UE5_PAK_OVERLAY",
+            "UE5 Pak Overlay (_99_P.pak) + Backup",
+            "حقن حزمة تعريب Unreal Engine 5 (_99_P.pak) في HT/Content/PatchPaks/ مع استعادة فورية"
     );
 
     public final String code;
@@ -55,10 +66,10 @@ public enum PatchStrategy {
                     throw new IllegalStateException("حزمة التعريب لا تحتوي على ملفات force/ المطلوبة للعبة " + profile.title);
                 }
             }
-        } else if (this == ASSET_REPLACE) {
+        } else if (this == ASSET_REPLACE || this == UE5_PAK_OVERLAY) {
             File[] listed = effectiveStageRoot.listFiles();
             if (listed == null || listed.length == 0) {
-                throw new IllegalStateException("حزمة الاستبدال (ASSET_REPLACE) فارغة.");
+                throw new IllegalStateException("حزمة التعريب (" + this.code + ") فارغة.");
             }
         }
     }
@@ -71,7 +82,7 @@ public enum PatchStrategy {
         if (!norm.isEmpty()) {
             return norm;
         }
-        if (this == ASSET_REPLACE) {
+        if (this == ASSET_REPLACE || this == UE5_PAK_OVERLAY) {
             return "";
         }
         return LauncherConfig.normalizeSubpath(LauncherConfig.GAME_TARGET_SUBPATH);

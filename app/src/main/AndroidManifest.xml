@@ -17,6 +17,8 @@
         <package android:name="com.wanda.jojo.gp.global" />
         <package android:name="com.bandainamcoent.dblegends_ww" />
         <package android:name="com.neowizgames.game.browndust2" />
+        <package android:name="com.hottagames.nte" />
+        <package android:name="com.hottagames.nte.samsung" />
         <package android:name="com.instagram.android" />
         <package android:name="com.android.vending" />
         <package android:name="moe.shizuku.privileged.api" />

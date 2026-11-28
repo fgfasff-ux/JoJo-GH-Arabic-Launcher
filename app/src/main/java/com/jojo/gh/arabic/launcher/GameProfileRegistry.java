@@ -140,6 +140,46 @@ public final class GameProfileRegistry {
                     "ccb7e1c6d1e2369b"
             ));
 
+            // 4) NTE: Neverness to Everness — محرك Unreal Engine 5.6 (حزمة تراكب مشفّرة pakchunk0-Android_ASTC_99_P.pak)
+            list.add(new GameProfile(
+                    "nte",
+                    "NTE: Neverness to Everness",
+                    "نيفرنس تو إيفرنس",
+                    "تحديث تعريب NTE: Neverness to Everness — تعريب عربي فصيح عبر حزمة تراكب UE5 Pak v12 المشفّرة",
+                    "com.hottagames.nte",
+                    Color.parseColor("#A855F7"),
+                    Color.parseColor("#0E7490"),
+                    R.drawable.ic_nte_game,
+                    R.drawable.bg_nte_banner,
+                    0,
+                    SecretVault.nteGithubRepo(),
+                    SecretVault.nteManifestUrl(),
+                    SecretVault.nteBetaManifestUrl(),
+                    PatchStrategy.UE5_PAK_OVERLAY,
+                    "1.5.1.91915",
+                    32L,
+                    "v0.1.0-beta.1",
+                    true,
+                    "تعريب كامل نصوص NTE (121,553 قيداً • 99,036 نصاً فريداً) + توقيع العربية (تعريب RDAV)",
+                    "القوائم والإعدادات والمهارات والعناصر والمهام وحوارات القصة",
+                    "متوافق 100% مع الإصدار 1.5.1.91915 (UE 5.6 • Pak v12 + IoStore v8)",
+                    "🛡 حزمة تراكب آمنة (99_P.{pak,utoc,ucas}) دون تعديل الملفات الأصلية ✓",
+                    "N2E",
+                    "4.6 ★",
+                    "+5,000,000",
+                    "لعبة تقمص أدوار وعالم مفتوح خارق للطبيعة بمحرك Unreal Engine 5 — تعريب عربي فصيح مع دعم كامل للخطوط العربية واتجاه RTL.",
+                    99036,
+                    Arrays.asList(
+                            "https://play-lh.googleusercontent.com/kPbuoflxFoAfsbEZ8i0Lqh10vDPJg_LQuCSFG4oXG7ykpAPgSsXi_Ueur-2ooH6XLcuenEfVn3McVzFy2Q3jbg=w1280",
+                            "https://play-lh.googleusercontent.com/hWbvgvH0n_x8cYOwtLJ4H6DGqIpmhe9m-wHwB_Eus3Z5qemHKcH1j4NTKe8XEM9nDkJBVJEEESw6zHJzw-Tw=w1280",
+                            "https://play-lh.googleusercontent.com/z08S755xgkeoe_PpmZuttgY6ohSSJPLOXm0pn5yMvaBIu5uhbU6A-_FCh8rCn5l0Eu9RZafRWovbhG5rM1HvenA=w1280",
+                            "https://play-lh.googleusercontent.com/p1nwZdv34rEeegd8uTiqPU8hpRLLjcK5Rk2RA_zcZ3x15PEFmyyjCq3re-9u4RcdA48ffUw9DBFCMOG4Cbts-y8=w1280",
+                            "https://play-lh.googleusercontent.com/3ytgnH8NdbUDrjJpfxY1QToBf2oISCPWSZPRERdNmnspeSCkDQ61fUz-rnZfR9fznBzVUCQQtAqyar5319tlXws=w1280",
+                            "https://play-lh.googleusercontent.com/bPCjjR5-lmEMeARSAjdQHZPMKina6E03uCIdBwJCl8yeVCn1CTMUjbiw9xlz1W9HASsRb1acaXaSA-rNGSnS8Q=w1280"
+                    ),
+                    "9e54b1c7a8d2f304"
+            ));
+
             cachedProfiles = Collections.unmodifiableList(list);
         }
         return cachedProfiles;

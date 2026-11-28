@@ -139,6 +139,9 @@ public class ShellBridgeServer {
         if (targetPackage != null && "com.neowizgames.game.browndust2".equals(targetPackage.trim())) {
             return ".bd2_arabic_backup";
         }
+        if (targetPackage != null && ("com.hottagames.nte".equals(targetPackage.trim()) || "com.hottagames.nte.samsung".equals(targetPackage.trim()))) {
+            return ".nte_arabic_backup";
+        }
         if (isJoJoPackage(targetPackage)) {
             return LauncherConfig.BACKUP_DIR_NAME;
         }
